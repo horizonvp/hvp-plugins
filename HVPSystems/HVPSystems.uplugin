@@ -1,0 +1,39 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "HVP Systems",
+	"Description": "Horizon VP's runtime systems: AnimatedGameflow (hierarchical state machine with exit authorities, entry requirements and All/Any queue blocks), CodeAnimation (code-driven animation timelines) and HandGrab (world-level pinch-grab primitive). The editor module carries the gameflow smoke test and the state-rename commandlet.",
+	"Category": "HVP",
+	"CreatedBy": "Horizon VP",
+	"CreatedByURL": "https://horizonvp.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "HVPGameflow",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPCodeAnimation",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPHandGrab",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPSystemsEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "HVP Stereo Button",
+	"Description": "A hand-pressable VR button whose face is a UMG widget shown through a depth-composited stereo layer. Floats on a spring: fingers tilt and sink it, and it eases back.",
+	"Category": "HVP",
+	"CreatedBy": "Horizon VP",
+	"CreatedByURL": "https://horizonvp.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "HVPStereoButton",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPStereoButtonEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	]
+}

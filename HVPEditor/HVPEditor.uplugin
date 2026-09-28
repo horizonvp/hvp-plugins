@@ -1,0 +1,40 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "HVP Editor",
+	"Description": "Horizon VP's stateless editor tools: asset naming conventions, Blueprint graph selection, palette generation, and the plugin content reference check. Nothing here is serialised into an asset, so the plugin can be enabled or disabled per project at will, and none of it exists in a packaged build.",
+	"Category": "HVP",
+	"CreatedBy": "Horizon VP",
+	"CreatedByURL": "https://horizonvp.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "HVPNamingConventions",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "HVPGraphSelectEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPPaletteEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "HVPReferenceCheck",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

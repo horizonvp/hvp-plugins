@@ -1,0 +1,26 @@
+# Unreal build output and caches, at any depth (plugins and the HVPHost fixture alike)
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+*.modules
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.sln
+*.code-workspace
+*.VC.db
+*.VC.opendb
+*.opensdf
+*.sdf
+*.suo
+*.ipch
+*.xcodeproj
+*.xcworkspace
+
+# Misc
+*.log
+*.pyc

@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Build fixture for the HVP plugins. Not a template: it exists so every tag compiles and the smoke tests run against a project that contains nothing but the plugins.",
+	"Modules": [
+		{
+			"Name": "HVPHost",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "HVPSystems",
+			"Enabled": true
+		},
+		{
+			"Name": "HVPStereoButton",
+			"Enabled": true
+		},
+		{
+			"Name": "HVPEditor",
+			"Enabled": true,
+			"TargetAllowList": [ "Editor" ]
+		},
+		{
+			"Name": "HVPPrimitiveData",
+			"Enabled": true
+		}
+	],
+	"AdditionalPluginDirectories": [
+		".."
+	]
+}

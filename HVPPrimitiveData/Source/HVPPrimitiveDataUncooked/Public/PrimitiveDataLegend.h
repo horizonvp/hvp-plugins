@@ -4,9 +4,9 @@
 #include "UObject/Object.h"
 #include "UObject/SoftObjectPtr.h"
 
-#include "PrimitiveDataIndex.generated.h"
+#include "PrimitiveDataLegend.generated.h"
 
-class UPrimitiveDataIndex;
+class UPrimitiveDataLegend;
 
 UENUM()
 enum class EPrimitiveDataParameterType : uint8
@@ -19,7 +19,7 @@ enum class EPrimitiveDataParameterType : uint8
 
 /** One named parameter and the custom primitive data slot it owns. */
 USTRUCT()
-struct HVPPRIMITIVEDATAUNCOOKED_API FPrimitiveDataIndexEntry
+struct HVPPRIMITIVEDATAUNCOOKED_API FPrimitiveDataLegendEntry
 {
 	GENERATED_BODY()
 
@@ -57,55 +57,55 @@ struct HVPPRIMITIVEDATAUNCOOKED_API FPrimitiveDataIndexEntry
 };
 
 /**
- * Index; old name -> new name for every entry relabelled by the edit; and whether the parameter
+ * Legend; old name -> new name for every entry relabelled by the edit; and whether the parameter
  * LAYOUT changed (names, types, slots) as opposed to only the binding list. Blueprints only need
  * recompiling for the former, and recompiling marks them dirty.
  */
 // Aliased because the comma inside TMap<FName, FName> would split the macro's arguments.
 using FPrimitiveDataRenames = TMap<FName, FName>;
-DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnPrimitiveDataIndexChanged, UPrimitiveDataIndex*, const FPrimitiveDataRenames&, bool);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnPrimitiveDataLegendChanged, UPrimitiveDataLegend*, const FPrimitiveDataRenames&, bool);
 
 /**
  * A named layout for a primitive's custom primitive data: which parameter lives in which float.
  *
  * The point is that nobody types a slot number. Parameters are labelled here and slots are allocated
- * for them; bound materials have those slots written into their parameters; Set Indexed Primitive Data
+ * for them; bound materials have those slots written into their parameters; Set Named Primitive Data
  * picks parameters by name and bakes the slot in when the Blueprint compiles.
  *
- * EDITOR-ONLY. Nothing reads an index at runtime - by the time a Blueprint runs, the slot is a literal
+ * EDITOR-ONLY. Nothing reads a legend at runtime - by the time a Blueprint runs, the slot is a literal
  * in an engine call - so the cooker leaves these assets out.
  */
-UCLASS(meta = (DisplayName = "Primitive Data Index"))
-class HVPPRIMITIVEDATAUNCOOKED_API UPrimitiveDataIndex : public UObject
+UCLASS(meta = (DisplayName = "Primitive Data Legend"))
+class HVPPRIMITIVEDATAUNCOOKED_API UPrimitiveDataLegend : public UObject
 {
 	GENERATED_BODY()
 
 public:
 	/** The parameters. Every primitive has 36 floats of custom data: a scalar costs one, a vector four. */
 	UPROPERTY(EditAnywhere, Category = "Parameters", meta = (TitleProperty = "Name"))
-	TArray<FPrimitiveDataIndexEntry> Parameters;
+	TArray<FPrimitiveDataLegendEntry> Parameters;
 
 	/**
-	 * Materials and material functions laid out by this index. Their parameters named like an entry
+	 * Materials and material functions laid out by this legend. Their parameters named like an entry
 	 * here are switched to custom primitive data and given that entry's slot. Material instances cannot
 	 * be bound - the custom primitive data setting lives on the parent's parameter node.
 	 *
-	 * Right-click a material or function > Bind to Primitive Data Index is the easy way in; a material
-	 * can belong to one index at a time.
+	 * Right-click a material or function > Bind to Primitive Data Legend is the easy way in; a material
+	 * can belong to one legend at a time.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Binding", meta = (AllowedClasses = "/Script/Engine.Material,/Script/Engine.MaterialFunction"))
 	TArray<TSoftObjectPtr<UObject>> BoundMaterials;
 
 	/**
-	 * Report a bound material that lacks one of this index's parameters as an error rather than a
+	 * Report a bound material that lacks one of this legend's parameters as an error rather than a
 	 * warning. Either way the reverse is always an error: a bound material reading custom primitive
-	 * data this index does not name.
+	 * data this legend does not name.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Binding")
 	bool bRequireAllParameters = true;
 
-	const FPrimitiveDataIndexEntry* FindParameter(const FGuid& Id) const;
-	const FPrimitiveDataIndexEntry* FindParameter(FName Name) const;
+	const FPrimitiveDataLegendEntry* FindParameter(const FGuid& Id) const;
+	const FPrimitiveDataLegendEntry* FindParameter(FName Name) const;
 
 	/** Floats claimed by parameters that have a slot. */
 	int32 GetUsedFloats() const;
@@ -118,7 +118,7 @@ public:
 	 * slot, or the binding list itself. The editor module listens, re-syncs materials and refreshes
 	 * nodes - this module cannot, as both need editor-only code.
 	 */
-	static FOnPrimitiveDataIndexChanged OnChanged;
+	static FOnPrimitiveDataLegendChanged OnChanged;
 
 	//~ UObject
 	virtual bool IsEditorOnly() const override { return true; }

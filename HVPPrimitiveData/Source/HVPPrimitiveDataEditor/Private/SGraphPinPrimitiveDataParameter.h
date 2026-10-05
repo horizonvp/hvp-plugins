@@ -5,16 +5,16 @@
 #include "SGraphPin.h"
 #include "Widgets/Input/SComboBox.h"
 
-class UK2Node_SetIndexedPrimitiveData;
+class UK2Node_SetNamedPrimitiveData;
 
 /**
- * The Parameter pin on Set Indexed Primitive Data: a dropdown of the chosen index's parameters, each
+ * The Parameter pin on Set Named Primitive Data: a dropdown of the chosen legend's parameters, each
  * labelled with its type and slot.
  *
  * The option list is rebuilt every time the dropdown opens rather than once at construction, so an
- * index edited while the Blueprint is open is reflected the next time you look - no change
+ * legend edited while the Blueprint is open is reflected the next time you look - no change
  * notification to subscribe to, and nothing to go stale. The shown value reads the pin every frame
- * for the same reason: the node can rewrite it (a new index, a rename) without this widget knowing.
+ * for the same reason: the node can rewrite it (a new legend, a rename) without this widget knowing.
  */
 class SGraphPinPrimitiveDataParameter : public SGraphPin
 {
@@ -28,7 +28,7 @@ protected:
 	virtual TSharedRef<SWidget> GetDefaultValueWidget() override;
 
 private:
-	UK2Node_SetIndexedPrimitiveData* GetNode() const;
+	UK2Node_SetNamedPrimitiveData* GetNode() const;
 	void RebuildOptions();
 	FText LabelFor(FName Name) const;
 	void OnSelected(TSharedPtr<FName> Item, ESelectInfo::Type Info);
@@ -37,7 +37,7 @@ private:
 	TSharedPtr<SComboBox<TSharedPtr<FName>>> Combo;
 };
 
-/** Hands the Parameter pin of Set Indexed Primitive Data the widget above. */
+/** Hands the Parameter pin of Set Named Primitive Data the widget above. */
 class FPrimitiveDataParameterPinFactory : public FGraphPanelPinFactory
 {
 public:

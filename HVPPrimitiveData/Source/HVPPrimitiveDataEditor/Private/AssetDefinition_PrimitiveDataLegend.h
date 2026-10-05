@@ -3,11 +3,11 @@
 #include "CoreMinimal.h"
 #include "AssetDefinitionDefault.h"
 
-#include "AssetDefinition_PrimitiveDataIndex.generated.h"
+#include "AssetDefinition_PrimitiveDataLegend.generated.h"
 
-/** Name, colour and Content Browser category for Primitive Data Index assets. */
+/** Name, colour and Content Browser category for Primitive Data Legend assets. */
 UCLASS()
-class UAssetDefinition_PrimitiveDataIndex : public UAssetDefinitionDefault
+class UAssetDefinition_PrimitiveDataLegend : public UAssetDefinitionDefault
 {
 	GENERATED_BODY()
 

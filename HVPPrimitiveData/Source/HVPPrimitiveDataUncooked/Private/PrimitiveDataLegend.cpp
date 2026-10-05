@@ -1,39 +1,39 @@
-#include "PrimitiveDataIndex.h"
+#include "PrimitiveDataLegend.h"
 
 #include "Misc/DataValidation.h"
 #include "SceneTypes.h"
 
-#define LOCTEXT_NAMESPACE "PrimitiveDataIndex"
+#define LOCTEXT_NAMESPACE "PrimitiveDataLegend"
 
-FOnPrimitiveDataIndexChanged UPrimitiveDataIndex::OnChanged;
+FOnPrimitiveDataLegendChanged UPrimitiveDataLegend::OnChanged;
 
-int32 UPrimitiveDataIndex::GetCapacity()
+int32 UPrimitiveDataLegend::GetCapacity()
 {
 	return FCustomPrimitiveData::NumCustomPrimitiveDataFloats;
 }
 
-const FPrimitiveDataIndexEntry* UPrimitiveDataIndex::FindParameter(const FGuid& Id) const
+const FPrimitiveDataLegendEntry* UPrimitiveDataLegend::FindParameter(const FGuid& Id) const
 {
 	if (!Id.IsValid())
 	{
 		return nullptr;
 	}
-	return Parameters.FindByPredicate([&Id](const FPrimitiveDataIndexEntry& E) { return E.Id == Id; });
+	return Parameters.FindByPredicate([&Id](const FPrimitiveDataLegendEntry& E) { return E.Id == Id; });
 }
 
-const FPrimitiveDataIndexEntry* UPrimitiveDataIndex::FindParameter(FName Name) const
+const FPrimitiveDataLegendEntry* UPrimitiveDataLegend::FindParameter(FName Name) const
 {
 	if (Name.IsNone())
 	{
 		return nullptr;
 	}
-	return Parameters.FindByPredicate([Name](const FPrimitiveDataIndexEntry& E) { return E.Name == Name; });
+	return Parameters.FindByPredicate([Name](const FPrimitiveDataLegendEntry& E) { return E.Name == Name; });
 }
 
-int32 UPrimitiveDataIndex::GetUsedFloats() const
+int32 UPrimitiveDataLegend::GetUsedFloats() const
 {
 	int32 Used = 0;
-	for (const FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		if (Entry.HasSlot())
 		{
@@ -43,7 +43,7 @@ int32 UPrimitiveDataIndex::GetUsedFloats() const
 	return Used;
 }
 
-void UPrimitiveDataIndex::PostInitProperties()
+void UPrimitiveDataLegend::PostInitProperties()
 {
 	Super::PostInitProperties();
 	if (!HasAnyFlags(RF_ClassDefaultObject))
@@ -52,14 +52,14 @@ void UPrimitiveDataIndex::PostInitProperties()
 	}
 }
 
-void UPrimitiveDataIndex::PostLoad()
+void UPrimitiveDataLegend::PostLoad()
 {
 	Super::PostLoad();
 	Normalize();
 	TakeSnapshot();
 }
 
-bool UPrimitiveDataIndex::Normalize()
+bool UPrimitiveDataLegend::Normalize()
 {
 	bool bChanged = false;
 
@@ -68,7 +68,7 @@ bool UPrimitiveDataIndex::Normalize()
 	// nodes would start following it.
 	TSet<FGuid> SeenIds;
 	TSet<FName> SeenNames;
-	for (FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		if (!Entry.Id.IsValid() || SeenIds.Contains(Entry.Id))
 		{
@@ -80,7 +80,7 @@ bool UPrimitiveDataIndex::Normalize()
 	}
 
 	// A fresh "+" element arrives nameless; give it something a node's dropdown can show.
-	for (FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		if (Entry.Name.IsNone())
 		{
@@ -133,7 +133,7 @@ bool UPrimitiveDataIndex::Normalize()
 	TArray<int32> Resized;
 	for (int32 i = 0; i < Parameters.Num(); ++i)
 	{
-		FPrimitiveDataIndexEntry& Entry = Parameters[i];
+		FPrimitiveDataLegendEntry& Entry = Parameters[i];
 		const int32 Width = Entry.GetWidth();
 		if (Entry.HasSlot() && Entry.AllocatedWidth == Width && Fits(Entry.Slot, Width))
 		{
@@ -151,7 +151,7 @@ bool UPrimitiveDataIndex::Normalize()
 
 	for (int32 i : Resized)
 	{
-		FPrimitiveDataIndexEntry& Entry = Parameters[i];
+		FPrimitiveDataLegendEntry& Entry = Parameters[i];
 		const int32 Width = Entry.GetWidth();
 		if (Fits(Entry.Slot, Width))
 		{
@@ -167,7 +167,7 @@ bool UPrimitiveDataIndex::Normalize()
 
 	for (int32 i : Pending)
 	{
-		FPrimitiveDataIndexEntry& Entry = Parameters[i];
+		FPrimitiveDataLegendEntry& Entry = Parameters[i];
 		const int32 Width = Entry.GetWidth();
 		const int32 Previous = Entry.Slot;
 
@@ -182,17 +182,17 @@ bool UPrimitiveDataIndex::Normalize()
 				break;
 			}
 		}
-		// Still INDEX_NONE means the index is full; IsDataValid and the node both report it.
+		// Still INDEX_NONE means the legend is full; IsDataValid and the node both report it.
 		bChanged |= (Entry.Slot != Previous);
 	}
 
 	return bChanged;
 }
 
-uint32 UPrimitiveDataIndex::ComputeLayoutHash() const
+uint32 UPrimitiveDataLegend::ComputeLayoutHash() const
 {
 	uint32 Hash = 0;
-	for (const FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		Hash = HashCombine(Hash, GetTypeHash(Entry.Id));
 		Hash = HashCombine(Hash, GetTypeHash(Entry.Name));
@@ -202,7 +202,7 @@ uint32 UPrimitiveDataIndex::ComputeLayoutHash() const
 	return Hash;
 }
 
-uint32 UPrimitiveDataIndex::ComputeBindingHash() const
+uint32 UPrimitiveDataLegend::ComputeBindingHash() const
 {
 	uint32 Hash = GetTypeHash(bRequireAllParameters);
 	for (const TSoftObjectPtr<UObject>& Bound : BoundMaterials)
@@ -212,12 +212,12 @@ uint32 UPrimitiveDataIndex::ComputeBindingHash() const
 	return Hash;
 }
 
-void UPrimitiveDataIndex::TakeSnapshot()
+void UPrimitiveDataLegend::TakeSnapshot()
 {
 	LastLayoutHash = ComputeLayoutHash();
 	LastBindingHash = ComputeBindingHash();
 	LastNames.Reset();
-	for (const FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		LastNames.Add(Entry.Id, Entry.Name);
 	}
@@ -225,7 +225,7 @@ void UPrimitiveDataIndex::TakeSnapshot()
 
 #if WITH_EDITOR
 
-void UPrimitiveDataIndex::PostEditChangeProperty(FPropertyChangedEvent& Event)
+void UPrimitiveDataLegend::PostEditChangeProperty(FPropertyChangedEvent& Event)
 {
 	Super::PostEditChangeProperty(Event);
 
@@ -248,7 +248,7 @@ void UPrimitiveDataIndex::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	// Renames by identity: same Id, different name. Handed to listeners so bound materials can have
 	// the matching parameter relabelled rather than reported as one missing and one stray.
 	TMap<FName, FName> Renames;
-	for (const FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		if (const FName* Before = LastNames.Find(Entry.Id))
 		{
@@ -263,12 +263,12 @@ void UPrimitiveDataIndex::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	OnChanged.Broadcast(this, Renames, bLayoutChanged);
 }
 
-EDataValidationResult UPrimitiveDataIndex::IsDataValid(FDataValidationContext& Context) const
+EDataValidationResult UPrimitiveDataLegend::IsDataValid(FDataValidationContext& Context) const
 {
 	EDataValidationResult Result = Super::IsDataValid(Context);
 
 	TSet<FName> Names;
-	for (const FPrimitiveDataIndexEntry& Entry : Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
 	{
 		if (Names.Contains(Entry.Name))
 		{

@@ -2,15 +2,18 @@
 #include "ContentBrowserMenuContexts.h"
 #include "Containers/Ticker.h"
 #include "EdGraphUtilities.h"
-#include "K2Node_SetIndexedPrimitiveData.h"
+#include "K2Node_SetNamedPrimitiveData.h"
+#include "K2Node_SetNamedPrimitiveDataMulti.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Logging/MessageLog.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialFunction.h"
 #include "MessageLogModule.h"
 #include "Modules/ModuleManager.h"
-#include "PrimitiveDataIndex.h"
-#include "PrimitiveDataIndexBinding.h"
+#include "PrimitiveDataLegend.h"
+#include "PrimitiveDataLegendBinding.h"
+#include "PropertyEditorModule.h"
+#include "SetNamedPrimitiveDataMultiDetails.h"
 #include "SGraphPinPrimitiveDataParameter.h"
 #include "ScopedTransaction.h"
 #include "ToolMenus.h"
@@ -22,11 +25,11 @@
 /**
  * Wiring. Three jobs, all reactions to something the user did elsewhere:
  *
- *   - an index was edited: re-lay out its bound materials, refresh the nodes that use it;
- *   - a bound material was saved: check it still matches its index, and say so if not;
- *   - the right-click entries on indexes and on materials.
+ *   - a legend was edited: re-lay out its bound materials, refresh the nodes that use it;
+ *   - a bound material was saved: check it still matches its legend, and say so if not;
+ *   - the right-click entries on legends and on materials.
  *
- * The first two are DEFERRED to the next tick. An index edit arrives from inside PostEditChange (and
+ * The first two are DEFERRED to the next tick. A legend edit arrives from inside PostEditChange (and
  * from inside undo), and a save arrives from inside SavePackage, where loading assets or recompiling
  * materials is at best rude and at worst illegal. One tick later nothing is mid-flight.
  */
@@ -39,12 +42,16 @@ public:
 		FMessageLogInitializationOptions Options;
 		Options.bShowFilters = true;
 		Options.bAllowClear = true;
-		MessageLog.RegisterLogListing(FPrimitiveDataIndexBinding::LogName, LOCTEXT("LogLabel", "Primitive Data Index"), Options);
+		MessageLog.RegisterLogListing(FPrimitiveDataLegendBinding::LogName, LOCTEXT("LogLabel", "Primitive Data Legend"), Options);
 
 		PinFactory = MakeShared<FPrimitiveDataParameterPinFactory>();
 		FEdGraphUtilities::RegisterVisualPinFactory(PinFactory);
 
-		IndexChangedHandle = UPrimitiveDataIndex::OnChanged.AddRaw(this, &FHVPPrimitiveDataEditorModule::OnIndexChanged);
+		FPropertyEditorModule& PropertyEditor = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedPrimitiveDataMulti::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedPrimitiveDataMultiDetails::MakeInstance));
+
+		LegendChangedHandle = UPrimitiveDataLegend::OnChanged.AddRaw(this, &FHVPPrimitiveDataEditorModule::OnLegendChanged);
 		PreSaveHandle = FCoreUObjectDelegates::OnObjectPreSave.AddRaw(this, &FHVPPrimitiveDataEditorModule::OnObjectPreSave);
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(
@@ -56,13 +63,18 @@ public:
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 
-		UPrimitiveDataIndex::OnChanged.Remove(IndexChangedHandle);
+		UPrimitiveDataLegend::OnChanged.Remove(LegendChangedHandle);
 		FCoreUObjectDelegates::OnObjectPreSave.Remove(PreSaveHandle);
 
 		if (TickerHandle.IsValid())
 		{
 			FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
 			TickerHandle.Reset();
+		}
+
+		if (FPropertyEditorModule* PropertyEditor = FModuleManager::GetModulePtr<FPropertyEditorModule>("PropertyEditor"))
+		{
+			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedPrimitiveDataMulti::StaticClass()->GetFName());
 		}
 
 		if (PinFactory.IsValid())
@@ -73,7 +85,7 @@ public:
 
 		if (FMessageLogModule* MessageLog = FModuleManager::GetModulePtr<FMessageLogModule>("MessageLog"))
 		{
-			MessageLog->UnregisterLogListing(FPrimitiveDataIndexBinding::LogName);
+			MessageLog->UnregisterLogListing(FPrimitiveDataLegendBinding::LogName);
 		}
 	}
 
@@ -82,7 +94,7 @@ private:
 	// Deferred work
 	// -----------------------------------------------------------------------
 
-	struct FPendingIndex
+	struct FPendingLegend
 	{
 		TMap<FName, FName> Renames;
 		bool bLayoutChanged = false;
@@ -97,14 +109,14 @@ private:
 		}
 	}
 
-	void OnIndexChanged(UPrimitiveDataIndex* Index, const TMap<FName, FName>& Renames, bool bLayoutChanged)
+	void OnLegendChanged(UPrimitiveDataLegend* Legend, const TMap<FName, FName>& Renames, bool bLayoutChanged)
 	{
-		if (!Index)
+		if (!Legend)
 		{
 			return;
 		}
 
-		FPendingIndex& Pending = PendingIndexes.FindOrAdd(Index);
+		FPendingLegend& Pending = PendingLegends.FindOrAdd(Legend);
 		Pending.bLayoutChanged |= bLayoutChanged;
 
 		// Two renames of one entry inside a tick (A -> B, then B -> C) have to reach the material as
@@ -153,19 +165,19 @@ private:
 	{
 		TickerHandle.Reset();
 
-		TMap<TWeakObjectPtr<UPrimitiveDataIndex>, FPendingIndex> Indexes = MoveTemp(PendingIndexes);
-		PendingIndexes.Reset();
+		TMap<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend> Legends = MoveTemp(PendingLegends);
+		PendingLegends.Reset();
 		TSet<FSoftObjectPath> Saved = MoveTemp(PendingSaveChecks);
 		PendingSaveChecks.Reset();
 
-		for (const TPair<TWeakObjectPtr<UPrimitiveDataIndex>, FPendingIndex>& Pair : Indexes)
+		for (const TPair<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend>& Pair : Legends)
 		{
-			if (UPrimitiveDataIndex* Index = Pair.Key.Get())
+			if (UPrimitiveDataLegend* Legend = Pair.Key.Get())
 			{
-				FPrimitiveDataIndexBinding::SyncAll(*Index, /*bApply*/ true, Pair.Value.Renames);
+				FPrimitiveDataLegendBinding::SyncAll(*Legend, /*bApply*/ true, Pair.Value.Renames);
 				if (Pair.Value.bLayoutChanged)
 				{
-					RefreshNodes(Index);
+					RefreshNodes(Legend);
 				}
 			}
 		}
@@ -176,19 +188,34 @@ private:
 	}
 
 	/**
-	 * Reconstruct every loaded node that uses this index and mark its Blueprint for recompiling.
+	 * Reconstruct every loaded node that uses this legend and mark its Blueprint for recompiling.
 	 *
 	 * Reconstruction picks up renames and type changes on the pins. The recompile is what picks up a
 	 * moved SLOT, which no pin shows: it lives only in the compiled code, as a literal. Unloaded
-	 * Blueprints need nothing - they compile against the current index when they load.
+	 * Blueprints need nothing - they compile against the current legend when they load.
 	 */
-	static void RefreshNodes(UPrimitiveDataIndex* Index)
+	static void RefreshNodes(UPrimitiveDataLegend* Legend)
 	{
 		TSet<UBlueprint*> Touched;
-		for (TObjectIterator<UK2Node_SetIndexedPrimitiveData> It; It; ++It)
+		RefreshNodesOf<UK2Node_SetNamedPrimitiveData>(Legend, Touched);
+		RefreshNodesOf<UK2Node_SetNamedPrimitiveDataMulti>(Legend, Touched, [](UK2Node_SetNamedPrimitiveDataMulti* Node)
 		{
-			UK2Node_SetIndexedPrimitiveData* Node = *It;
-			if (!IsValid(Node) || Node->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) || Node->GetIndex() != Index)
+			// Its Details panel lists the legend's parameters; an edit may have added, removed or renamed some.
+			Node->OnParametersOffered.Broadcast();
+		});
+		for (UBlueprint* Blueprint : Touched)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		}
+	}
+
+	template <typename TNode>
+	static void RefreshNodesOf(UPrimitiveDataLegend* Legend, TSet<UBlueprint*>& Touched, TFunction<void(TNode*)> After = nullptr)
+	{
+		for (TObjectIterator<TNode> It; It; ++It)
+		{
+			TNode* Node = *It;
+			if (!IsValid(Node) || Node->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) || Node->GetLegend() != Legend)
 			{
 				continue;
 			}
@@ -199,16 +226,16 @@ private:
 				continue;
 			}
 			Node->ReconstructNode();
+			if (After)
+			{
+				After(Node);
+			}
 			Touched.Add(Blueprint);
-		}
-		for (UBlueprint* Blueprint : Touched)
-		{
-			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 		}
 	}
 
 	/**
-	 * The "enforcing" half: a bound material that was just saved gets checked against its index. It is
+	 * The "enforcing" half: a bound material that was just saved gets checked against its legend. It is
 	 * reported, never changed - it has just been saved, and rewriting it would dirty it again.
 	 */
 	static void CheckSaved(const TSet<FSoftObjectPath>& Saved)
@@ -218,7 +245,7 @@ private:
 			return;
 		}
 
-		FMessageLog Log(FPrimitiveDataIndexBinding::LogName);
+		FMessageLog Log(FPrimitiveDataLegendBinding::LogName);
 		bool bProblems = false;
 		for (const FSoftObjectPath& Path : Saved)
 		{
@@ -227,19 +254,19 @@ private:
 			{
 				continue;
 			}
-			for (UPrimitiveDataIndex* Index : FPrimitiveDataIndexBinding::FindIndexesBinding(Material))
+			for (UPrimitiveDataLegend* Legend : FPrimitiveDataLegendBinding::FindLegendsBinding(Material))
 			{
-				const FPrimitiveDataBindingResult Result = FPrimitiveDataIndexBinding::Sync(*Index, Material, /*bApply*/ false);
+				const FPrimitiveDataBindingResult Result = FPrimitiveDataLegendBinding::Sync(*Legend, Material, /*bApply*/ false);
 				if (!Result.IsClean())
 				{
-					FPrimitiveDataIndexBinding::ReportTo(Log, *Index, Material, Result);
+					FPrimitiveDataLegendBinding::ReportTo(Log, *Legend, Material, Result);
 					bProblems = true;
 				}
 			}
 		}
 		if (bProblems)
 		{
-			Log.Notify(LOCTEXT("SavedDrift", "A saved material no longer matches its Primitive Data Index"),
+			Log.Notify(LOCTEXT("SavedDrift", "A saved material no longer matches its Primitive Data Legend"),
 				EMessageSeverity::Warning, /*bForce*/ true);
 		}
 	}
@@ -252,15 +279,15 @@ private:
 	{
 		FToolMenuOwnerScoped OwnerScoped(this);
 
-		RegisterIndexMenu();
+		RegisterLegendMenu();
 		RegisterBindMenu(UMaterial::StaticClass());
 		// Material layers and blends derive from UMaterialFunction; their menus inherit this one.
 		RegisterBindMenu(UMaterialFunction::StaticClass());
 	}
 
-	static void RegisterIndexMenu()
+	static void RegisterLegendMenu()
 	{
-		UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(UPrimitiveDataIndex::StaticClass());
+		UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(UPrimitiveDataLegend::StaticClass());
 		if (!Menu)
 		{
 			return;
@@ -271,30 +298,30 @@ private:
 			TEXT("HVPPrimitiveDataSync"),
 			LOCTEXT("SyncLabel", "Sync Bound Materials"),
 			LOCTEXT("SyncTooltip",
-				"Lay out every bound material by this index: parameters named like an entry are switched to "
-				"custom primitive data and given its slot. Happens automatically when the index is edited; "
+				"Lay out every bound material by this legend: parameters named like an entry are switched to "
+				"custom primitive data and given its slot. Happens automatically when the legend is edited; "
 				"this is for when a material changed instead."),
 			FSlateIcon(),
-			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedIndexes, true)));
+			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends, true)));
 
 		Section.AddMenuEntry(
 			TEXT("HVPPrimitiveDataCheck"),
 			LOCTEXT("CheckLabel", "Check Bound Materials"),
-			LOCTEXT("CheckTooltip", "Report how every bound material differs from this index, without changing anything."),
+			LOCTEXT("CheckTooltip", "Report how every bound material differs from this legend, without changing anything."),
 			FSlateIcon(),
-			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedIndexes, false)));
+			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends, false)));
 	}
 
-	static void RunOnSelectedIndexes(const FToolMenuContext& Context, bool bApply)
+	static void RunOnSelectedLegends(const FToolMenuContext& Context, bool bApply)
 	{
 		const UContentBrowserAssetContextMenuContext* Browser = Context.FindContext<UContentBrowserAssetContextMenuContext>();
 		if (!Browser)
 		{
 			return;
 		}
-		for (UPrimitiveDataIndex* Index : Browser->LoadSelectedObjects<UPrimitiveDataIndex>())
+		for (UPrimitiveDataLegend* Legend : Browser->LoadSelectedObjects<UPrimitiveDataLegend>())
 		{
-			FPrimitiveDataIndexBinding::SyncAll(*Index, bApply);
+			FPrimitiveDataLegendBinding::SyncAll(*Legend, bApply);
 		}
 	}
 
@@ -309,15 +336,15 @@ private:
 		FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("GetAssetActions"));
 		Section.AddSubMenu(
 			TEXT("HVPPrimitiveDataBind"),
-			LOCTEXT("BindLabel", "Bind to Primitive Data Index"),
+			LOCTEXT("BindLabel", "Bind to Primitive Data Legend"),
 			LOCTEXT("BindTooltip",
-				"Let an index lay this material's custom primitive data out for it. A material belongs to one "
-				"index at a time; choosing the ticked one unbinds it."),
+				"Let a legend lay this material's custom primitive data out for it. A material belongs to one "
+				"legend at a time; choosing the ticked one unbinds it."),
 			FNewToolMenuDelegate::CreateStatic(&FillBindMenu));
 	}
 
 	/**
-	 * Built when the submenu opens, so it always lists the indexes that exist now. Only the indexes are
+	 * Built when the submenu opens, so it always lists the legends that exist now. Only the legends are
 	 * loaded to read their binding lists - small assets. The selected materials are not loaded until
 	 * one is actually bound.
 	 */
@@ -338,27 +365,27 @@ private:
 			}
 		}
 
-		TArray<FAssetData> Indexes;
-		FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataIndex::StaticClass()->GetClassPathName(), Indexes);
-		Indexes.Sort([](const FAssetData& A, const FAssetData& B) { return A.AssetName.LexicalLess(B.AssetName); });
+		TArray<FAssetData> Legends;
+		FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataLegend::StaticClass()->GetClassPathName(), Legends);
+		Legends.Sort([](const FAssetData& A, const FAssetData& B) { return A.AssetName.LexicalLess(B.AssetName); });
 
-		FToolMenuSection& Section = SubMenu->AddSection(TEXT("Indexes"), LOCTEXT("IndexesHeading", "Primitive Data Indexes"));
+		FToolMenuSection& Section = SubMenu->AddSection(TEXT("Legends"), LOCTEXT("LegendsHeading", "Primitive Data Legends"));
 
-		if (Indexes.Num() == 0)
+		if (Legends.Num() == 0)
 		{
 			Section.AddMenuEntry(
-				TEXT("NoIndexes"),
-				LOCTEXT("NoIndexesLabel", "No indexes yet - Add > Materials > Primitive Data Index"),
+				TEXT("NoLegends"),
+				LOCTEXT("NoLegendsLabel", "No legends yet - Add > Materials > Primitive Data Legend"),
 				FText::GetEmpty(),
 				FSlateIcon(),
 				FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([] { return false; })));
 			return;
 		}
 
-		for (const FAssetData& IndexAsset : Indexes)
+		for (const FAssetData& LegendAsset : Legends)
 		{
-			const UPrimitiveDataIndex* Index = Cast<UPrimitiveDataIndex>(IndexAsset.GetAsset());
-			if (!Index)
+			const UPrimitiveDataLegend* Legend = Cast<UPrimitiveDataLegend>(LegendAsset.GetAsset());
+			if (!Legend)
 			{
 				continue;
 			}
@@ -367,7 +394,7 @@ private:
 			bool bAllBound = Selected.Num() > 0;
 			for (const FSoftObjectPath& Path : Selected)
 			{
-				if (!Index->BoundMaterials.ContainsByPredicate(
+				if (!Legend->BoundMaterials.ContainsByPredicate(
 					[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; }))
 				{
 					bAllBound = false;
@@ -375,36 +402,36 @@ private:
 				}
 			}
 
-			const FSoftObjectPath IndexPath = IndexAsset.GetSoftObjectPath();
+			const FSoftObjectPath LegendPath = LegendAsset.GetSoftObjectPath();
 			Section.AddMenuEntry(
-				IndexAsset.AssetName,
-				FText::FromName(IndexAsset.AssetName),
-				FText::Format(LOCTEXT("IndexEntryTooltip", "{0} parameter(s), {1} of {2} floats used."),
-					FText::AsNumber(Index->Parameters.Num()), FText::AsNumber(Index->GetUsedFloats()),
-					FText::AsNumber(UPrimitiveDataIndex::GetCapacity())),
+				LegendAsset.AssetName,
+				FText::FromName(LegendAsset.AssetName),
+				FText::Format(LOCTEXT("LegendEntryTooltip", "{0} parameter(s), {1} of {2} floats used."),
+					FText::AsNumber(Legend->Parameters.Num()), FText::AsNumber(Legend->GetUsedFloats()),
+					FText::AsNumber(UPrimitiveDataLegend::GetCapacity())),
 				FSlateIcon(),
 				FUIAction(
-					FExecuteAction::CreateLambda([IndexPath, Selected, bAllBound]()
+					FExecuteAction::CreateLambda([LegendPath, Selected, bAllBound]()
 					{
-						UPrimitiveDataIndex* Target = Cast<UPrimitiveDataIndex>(IndexPath.TryLoad());
+						UPrimitiveDataLegend* Target = Cast<UPrimitiveDataLegend>(LegendPath.TryLoad());
 						if (!Target)
 						{
 							return;
 						}
 						const FScopedTransaction Transaction(bAllBound
-							? LOCTEXT("UnbindTransaction", "Unbind from Primitive Data Index")
-							: LOCTEXT("BindTransaction", "Bind to Primitive Data Index"));
+							? LOCTEXT("UnbindTransaction", "Unbind from Primitive Data Legend")
+							: LOCTEXT("BindTransaction", "Bind to Primitive Data Legend"));
 						for (const FSoftObjectPath& Path : Selected)
 						{
 							if (UObject* Material = Path.TryLoad())
 							{
 								if (bAllBound)
 								{
-									FPrimitiveDataIndexBinding::Unbind(*Target, Material);
+									FPrimitiveDataLegendBinding::Unbind(*Target, Material);
 								}
 								else
 								{
-									FPrimitiveDataIndexBinding::Bind(*Target, Material);
+									FPrimitiveDataLegendBinding::Bind(*Target, Material);
 								}
 							}
 						}
@@ -416,11 +443,11 @@ private:
 	}
 
 	TSharedPtr<FPrimitiveDataParameterPinFactory> PinFactory;
-	FDelegateHandle IndexChangedHandle;
+	FDelegateHandle LegendChangedHandle;
 	FDelegateHandle PreSaveHandle;
 	FTSTicker::FDelegateHandle TickerHandle;
 
-	TMap<TWeakObjectPtr<UPrimitiveDataIndex>, FPendingIndex> PendingIndexes;
+	TMap<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend> PendingLegends;
 	TSet<FSoftObjectPath> PendingSaveChecks;
 };
 

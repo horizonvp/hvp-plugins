@@ -1,4 +1,4 @@
-#include "PrimitiveDataIndexBinding.h"
+#include "PrimitiveDataLegendBinding.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
@@ -10,13 +10,13 @@
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialFunction.h"
 #include "Misc/UObjectToken.h"
-#include "PrimitiveDataIndex.h"
+#include "PrimitiveDataLegend.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
-#define LOCTEXT_NAMESPACE "PrimitiveDataIndexBinding"
+#define LOCTEXT_NAMESPACE "PrimitiveDataLegendBinding"
 
-const FName FPrimitiveDataIndexBinding::LogName(TEXT("HVPPrimitiveData"));
+const FName FPrimitiveDataLegendBinding::LogName(TEXT("HVPPrimitiveData"));
 
 namespace PrimitiveDataBinding
 {
@@ -65,15 +65,15 @@ namespace PrimitiveDataBinding
 		return false;
 	}
 
-	void Report(FMessageLog& Log, const UPrimitiveDataIndex& Index, UObject* Material, const FPrimitiveDataBindingResult& Result)
+	void Report(FMessageLog& Log, const UPrimitiveDataLegend& Legend, UObject* Material, const FPrimitiveDataBindingResult& Result)
 	{
 		for (const FText& Error : Result.Errors)
 		{
 			Log.Error()
 				->AddToken(FUObjectToken::Create(Material))
 				->AddToken(FTextToken::Create(Error))
-				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (index:")))
-				->AddToken(FUObjectToken::Create(&Index))
+				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (legend:")))
+				->AddToken(FUObjectToken::Create(&Legend))
 				->AddToken(FTextToken::Create(LOCTEXT("Close", ")")));
 		}
 		for (const FText& Warning : Result.Warnings)
@@ -81,8 +81,8 @@ namespace PrimitiveDataBinding
 			Log.Warning()
 				->AddToken(FUObjectToken::Create(Material))
 				->AddToken(FTextToken::Create(Warning))
-				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (index:")))
-				->AddToken(FUObjectToken::Create(&Index))
+				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (legend:")))
+				->AddToken(FUObjectToken::Create(&Legend))
 				->AddToken(FTextToken::Create(LOCTEXT("Close", ")")));
 		}
 		if (!Result.SkippedReason.IsEmpty())
@@ -94,7 +94,7 @@ namespace PrimitiveDataBinding
 	}
 }
 
-FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDataIndex& Index, UObject* MaterialOrFunction,
+FPrimitiveDataBindingResult FPrimitiveDataLegendBinding::Sync(const UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction,
 	bool bApply, const TMap<FName, FName>& Renames)
 {
 	using namespace PrimitiveDataBinding;
@@ -153,16 +153,16 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 			}
 		}
 
-		const FPrimitiveDataIndexEntry* Entry = Index.FindParameter(Name);
+		const FPrimitiveDataLegendEntry* Entry = Legend.FindParameter(Name);
 		if (!Entry)
 		{
 			// Not ours - an ordinary parameter, unless it reads primitive data, which is the one thing a
-			// bound material must not do outside its index.
+			// bound material must not do outside its legend.
 			if (*Node.bUseCustomPrimitiveData)
 			{
 				Result.Errors.Add(FText::Format(
-					LOCTEXT("Stray", "'{0}' reads custom primitive data (slot {1}), but the index has no parameter by that name. "
-						"Add it to the index, or turn off Use Custom Primitive Data on the node."),
+					LOCTEXT("Stray", "'{0}' reads custom primitive data (slot {1}), but the legend has no parameter by that name. "
+						"Add it to the legend, or turn off Use Custom Primitive Data on the node."),
 					FText::FromName(*Node.Name), FText::AsNumber(*Node.Slot)));
 			}
 			continue;
@@ -173,14 +173,14 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 		if (Entry->Type != Node.Type)
 		{
 			Result.Errors.Add(FText::Format(
-				LOCTEXT("WrongType", "'{0}' is a {1} parameter here but a {2} in the index."),
+				LOCTEXT("WrongType", "'{0}' is a {1} parameter here but a {2} in the legend."),
 				FText::FromName(Entry->Name), TypeText(Node.Type), TypeText(Entry->Type)));
 			continue;
 		}
 		if (!Entry->HasSlot())
 		{
 			Result.Errors.Add(FText::Format(
-				LOCTEXT("NoSlot", "'{0}' has no slot - the index is out of room."), FText::FromName(Entry->Name)));
+				LOCTEXT("NoSlot", "'{0}' has no slot - the legend is out of room."), FText::FromName(Entry->Name)));
 			continue;
 		}
 
@@ -192,7 +192,7 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 		}
 	}
 
-	for (const FPrimitiveDataIndexEntry& Entry : Index.Parameters)
+	for (const FPrimitiveDataLegendEntry& Entry : Legend.Parameters)
 	{
 		if (Found.Contains(Entry.Name))
 		{
@@ -200,7 +200,7 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 		}
 		const FText Missing = FText::Format(
 			LOCTEXT("Missing", "has no {0} parameter named '{1}'."), TypeText(Entry.Type), FText::FromName(Entry.Name));
-		(Index.bRequireAllParameters ? Result.Errors : Result.Warnings).Add(Missing);
+		(Legend.bRequireAllParameters ? Result.Errors : Result.Warnings).Add(Missing);
 	}
 
 	if (Changes.Num() == 0)
@@ -214,7 +214,7 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 		for (const FChange& Change : Changes)
 		{
 			Result.Warnings.Add(FText::Format(
-				LOCTEXT("OutOfStep", "'{0}' is not laid out on its slot ({1}) yet. Right-click the index > Sync Bound Materials."),
+				LOCTEXT("OutOfStep", "'{0}' is not laid out on its slot ({1}) yet. Right-click the legend > Sync Bound Materials."),
 				FText::FromName(Change.NewName), FText::AsNumber(Change.NewSlot)));
 		}
 		return Result;
@@ -267,7 +267,7 @@ FPrimitiveDataBindingResult FPrimitiveDataIndexBinding::Sync(const UPrimitiveDat
 	return Result;
 }
 
-void FPrimitiveDataIndexBinding::SyncAll(UPrimitiveDataIndex& Index, bool bApply, const TMap<FName, FName>& Renames)
+void FPrimitiveDataLegendBinding::SyncAll(UPrimitiveDataLegend& Legend, bool bApply, const TMap<FName, FName>& Renames)
 {
 	FMessageLog Log(LogName);
 	bool bProblems = false;
@@ -275,7 +275,7 @@ void FPrimitiveDataIndexBinding::SyncAll(UPrimitiveDataIndex& Index, bool bApply
 	int32 Renamed = 0;
 	int32 Checked = 0;
 
-	for (const TSoftObjectPtr<UObject>& Bound : Index.BoundMaterials)
+	for (const TSoftObjectPtr<UObject>& Bound : Legend.BoundMaterials)
 	{
 		if (Bound.IsNull())
 		{
@@ -286,7 +286,7 @@ void FPrimitiveDataIndexBinding::SyncAll(UPrimitiveDataIndex& Index, bool bApply
 		if (!Material)
 		{
 			Log.Warning()
-				->AddToken(FUObjectToken::Create(&Index))
+				->AddToken(FUObjectToken::Create(&Legend))
 				->AddToken(FTextToken::Create(FText::Format(
 					LOCTEXT("Unloadable", "binds {0}, which could not be loaded. Remove it from Bound Materials if it was deleted."),
 					FText::FromString(Bound.ToString()))));
@@ -295,12 +295,12 @@ void FPrimitiveDataIndexBinding::SyncAll(UPrimitiveDataIndex& Index, bool bApply
 		}
 
 		++Checked;
-		const FPrimitiveDataBindingResult Result = Sync(Index, Material, bApply, Renames);
+		const FPrimitiveDataBindingResult Result = Sync(Legend, Material, bApply, Renames);
 		Written += Result.ParametersWritten;
 		Renamed += Result.ParametersRenamed;
 		if (!Result.IsClean())
 		{
-			PrimitiveDataBinding::Report(Log, Index, Material, Result);
+			PrimitiveDataBinding::Report(Log, Legend, Material, Result);
 			bProblems = true;
 		}
 	}
@@ -308,27 +308,27 @@ void FPrimitiveDataIndexBinding::SyncAll(UPrimitiveDataIndex& Index, bool bApply
 	if (bProblems)
 	{
 		Log.Notify(FText::Format(LOCTEXT("Problems", "{0}: some bound materials need attention"),
-			FText::FromString(Index.GetName())), EMessageSeverity::Warning, /*bForce*/ true);
+			FText::FromString(Legend.GetName())), EMessageSeverity::Warning, /*bForce*/ true);
 		return;
 	}
 
-	// Clean. Say so only when something actually happened - a no-op sync on every index edit would
+	// Clean. Say so only when something actually happened - a no-op sync on every legend edit would
 	// otherwise put a toast up for typing a name.
 	if (Written > 0 || Renamed > 0 || !bApply)
 	{
 		FNotificationInfo Info(bApply
 			? FText::Format(LOCTEXT("Synced", "{0}: laid out {1} parameter(s), renamed {2}, across {3} material(s)"),
-				FText::FromString(Index.GetName()), FText::AsNumber(Written), FText::AsNumber(Renamed), FText::AsNumber(Checked))
+				FText::FromString(Legend.GetName()), FText::AsNumber(Written), FText::AsNumber(Renamed), FText::AsNumber(Checked))
 			: FText::Format(LOCTEXT("Checked", "{0}: all {1} bound material(s) match"),
-				FText::FromString(Index.GetName()), FText::AsNumber(Checked)));
+				FText::FromString(Legend.GetName()), FText::AsNumber(Checked)));
 		Info.ExpireDuration = 4.f;
 		FSlateNotificationManager::Get().AddNotification(Info);
 	}
 }
 
-TArray<UPrimitiveDataIndex*> FPrimitiveDataIndexBinding::FindIndexesBinding(const UObject* MaterialOrFunction)
+TArray<UPrimitiveDataLegend*> FPrimitiveDataLegendBinding::FindLegendsBinding(const UObject* MaterialOrFunction)
 {
-	TArray<UPrimitiveDataIndex*> Out;
+	TArray<UPrimitiveDataLegend*> Out;
 	if (!MaterialOrFunction)
 	{
 		return Out;
@@ -336,70 +336,70 @@ TArray<UPrimitiveDataIndex*> FPrimitiveDataIndexBinding::FindIndexesBinding(cons
 
 	const FSoftObjectPath Path(MaterialOrFunction);
 	TArray<FAssetData> Assets;
-	FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataIndex::StaticClass()->GetClassPathName(), Assets);
+	FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataLegend::StaticClass()->GetClassPathName(), Assets);
 
-	// Indexes are a handful of small assets, so loading them to read the binding list is cheaper than
+	// Legends are a handful of small assets, so loading them to read the binding list is cheaper than
 	// maintaining a searchable tag for it.
 	for (const FAssetData& Asset : Assets)
 	{
-		UPrimitiveDataIndex* Index = Cast<UPrimitiveDataIndex>(Asset.GetAsset());
-		if (Index && Index->BoundMaterials.ContainsByPredicate(
+		UPrimitiveDataLegend* Legend = Cast<UPrimitiveDataLegend>(Asset.GetAsset());
+		if (Legend && Legend->BoundMaterials.ContainsByPredicate(
 			[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; }))
 		{
-			Out.Add(Index);
+			Out.Add(Legend);
 		}
 	}
 	return Out;
 }
 
-void FPrimitiveDataIndexBinding::Bind(UPrimitiveDataIndex& Index, UObject* MaterialOrFunction)
+void FPrimitiveDataLegendBinding::Bind(UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction)
 {
 	if (!MaterialOrFunction)
 	{
 		return;
 	}
 
-	for (UPrimitiveDataIndex* Other : FindIndexesBinding(MaterialOrFunction))
+	for (UPrimitiveDataLegend* Other : FindLegendsBinding(MaterialOrFunction))
 	{
-		if (Other != &Index)
+		if (Other != &Legend)
 		{
 			Unbind(*Other, MaterialOrFunction);
 		}
 	}
 
 	const FSoftObjectPath Path(MaterialOrFunction);
-	if (Index.BoundMaterials.ContainsByPredicate(
+	if (Legend.BoundMaterials.ContainsByPredicate(
 		[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; }))
 	{
-		SyncAll(Index, /*bApply*/ true);
+		SyncAll(Legend, /*bApply*/ true);
 		return;
 	}
 
-	Index.Modify();
-	Index.BoundMaterials.Add(TSoftObjectPtr<UObject>(MaterialOrFunction));
-	// Through PostEditChange, not a direct sync: the index notices its own change, re-snapshots, and
+	Legend.Modify();
+	Legend.BoundMaterials.Add(TSoftObjectPtr<UObject>(MaterialOrFunction));
+	// Through PostEditChange, not a direct sync: the legend notices its own change, re-snapshots, and
 	// its listener syncs - the same path a details-panel edit takes, so there is only one.
-	Index.PostEditChange();
+	Legend.PostEditChange();
 }
 
-void FPrimitiveDataIndexBinding::Unbind(UPrimitiveDataIndex& Index, UObject* MaterialOrFunction)
+void FPrimitiveDataLegendBinding::Unbind(UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction)
 {
 	const FSoftObjectPath Path(MaterialOrFunction);
-	Index.Modify();
-	const int32 Removed = Index.BoundMaterials.RemoveAll(
+	Legend.Modify();
+	const int32 Removed = Legend.BoundMaterials.RemoveAll(
 		[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; });
 	if (Removed > 0)
 	{
-		// The material keeps its layout. Unbinding stops the index managing it; it does not undo
-		// what the index wrote, which would change how the material renders.
-		Index.PostEditChange();
+		// The material keeps its layout. Unbinding stops the legend managing it; it does not undo
+		// what the legend wrote, which would change how the material renders.
+		Legend.PostEditChange();
 	}
 }
 
-void FPrimitiveDataIndexBinding::ReportTo(FMessageLog& Log, const UPrimitiveDataIndex& Index, UObject* MaterialOrFunction,
+void FPrimitiveDataLegendBinding::ReportTo(FMessageLog& Log, const UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction,
 	const FPrimitiveDataBindingResult& Result)
 {
-	PrimitiveDataBinding::Report(Log, Index, MaterialOrFunction, Result);
+	PrimitiveDataBinding::Report(Log, Legend, MaterialOrFunction, Result);
 }
 
 #undef LOCTEXT_NAMESPACE

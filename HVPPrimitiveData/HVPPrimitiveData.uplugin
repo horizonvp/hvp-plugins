@@ -3,13 +3,18 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "HVP Primitive Data",
-	"Description": "Name your custom primitive data once, in a Primitive Data Index asset. Bound materials have their parameters' slot numbers written for them, and the Set Indexed Primitive Data node picks parameters by name - its value pin becomes a scalar or a colour to match. The node compiles down to the engine's own SetCustomPrimitiveData calls with the slot baked in, so nothing from this plugin exists in a packaged build.",
+	"Description": "Name your custom primitive data once, in a Primitive Data Legend asset. Bound materials have their parameters' slot numbers written for them, and the Set Named Primitive Data nodes pick parameters by name - their value pins become scalars or colours to match. The nodes compile down to the engine's own SetCustomPrimitiveData calls with the slot baked in, so nearly nothing from this plugin exists in a packaged build - only the one function Set Named Primitive Data (Multiple) uses to write several non-adjacent parameters in a single update.",
 	"Category": "HVP",
 	"CreatedBy": "Horizon VP",
 	"CanContainContent": false,
 	"Installed": false,
 	"EnabledByDefault": true,
 	"Modules": [
+		{
+			"Name": "HVPPrimitiveDataRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
 		{
 			"Name": "HVPPrimitiveDataUncooked",
 			"Type": "UncookedOnly",
@@ -20,6 +25,5 @@
 			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
-	],
-	"CreatedByURL": "https://horizonvp.com"
+	]
 }

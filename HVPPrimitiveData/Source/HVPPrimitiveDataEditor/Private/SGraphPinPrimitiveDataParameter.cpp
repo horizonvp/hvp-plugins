@@ -1,8 +1,9 @@
 #include "SGraphPinPrimitiveDataParameter.h"
 
 #include "EdGraph/EdGraphSchema.h"
-#include "K2Node_SetIndexedPrimitiveData.h"
-#include "PrimitiveDataIndex.h"
+#include "K2Node_SetNamedPrimitiveData.h"
+#include "PrimitiveDataEntryLabel.h"
+#include "PrimitiveDataLegend.h"
 #include "ScopedTransaction.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -13,18 +14,18 @@ void SGraphPinPrimitiveDataParameter::Construct(const FArguments& InArgs, UEdGra
 	SGraphPin::Construct(SGraphPin::FArguments(), InPin);
 }
 
-UK2Node_SetIndexedPrimitiveData* SGraphPinPrimitiveDataParameter::GetNode() const
+UK2Node_SetNamedPrimitiveData* SGraphPinPrimitiveDataParameter::GetNode() const
 {
-	return GraphPinObj ? Cast<UK2Node_SetIndexedPrimitiveData>(GraphPinObj->GetOwningNodeUnchecked()) : nullptr;
+	return GraphPinObj ? Cast<UK2Node_SetNamedPrimitiveData>(GraphPinObj->GetOwningNodeUnchecked()) : nullptr;
 }
 
 void SGraphPinPrimitiveDataParameter::RebuildOptions()
 {
 	Options.Reset();
-	const UK2Node_SetIndexedPrimitiveData* Node = GetNode();
-	if (const UPrimitiveDataIndex* Index = Node ? Node->GetIndex() : nullptr)
+	const UK2Node_SetNamedPrimitiveData* Node = GetNode();
+	if (const UPrimitiveDataLegend* Legend = Node ? Node->GetLegend() : nullptr)
 	{
-		for (const FPrimitiveDataIndexEntry& Entry : Index->Parameters)
+		for (const FPrimitiveDataLegendEntry& Entry : Legend->Parameters)
 		{
 			Options.Add(MakeShared<FName>(Entry.Name));
 		}
@@ -33,27 +34,10 @@ void SGraphPinPrimitiveDataParameter::RebuildOptions()
 
 FText SGraphPinPrimitiveDataParameter::LabelFor(FName Name) const
 {
-	const UK2Node_SetIndexedPrimitiveData* Node = GetNode();
-	const UPrimitiveDataIndex* Index = Node ? Node->GetIndex() : nullptr;
-	const FPrimitiveDataIndexEntry* Entry = Index ? Index->FindParameter(Name) : nullptr;
-	if (!Entry)
-	{
-		return FText::FromName(Name);
-	}
-
-	// The slot is shown, not hidden: the whole point is that nobody has to go and look it up, but
-	// being able to see it at a glance is still useful when reading a material alongside.
-	if (!Entry->HasSlot())
-	{
-		return FText::Format(LOCTEXT("NoSlot", "{0}  (no slot - index full)"), FText::FromName(Entry->Name));
-	}
-	if (Entry->Type == EPrimitiveDataParameterType::Vector)
-	{
-		return FText::Format(LOCTEXT("VectorLabel", "{0}  (color, {1}-{2})"),
-			FText::FromName(Entry->Name), FText::AsNumber(Entry->Slot), FText::AsNumber(Entry->Slot + 3));
-	}
-	return FText::Format(LOCTEXT("ScalarLabel", "{0}  (scalar, {1})"),
-		FText::FromName(Entry->Name), FText::AsNumber(Entry->Slot));
+	const UK2Node_SetNamedPrimitiveData* Node = GetNode();
+	const UPrimitiveDataLegend* Legend = Node ? Node->GetLegend() : nullptr;
+	const FPrimitiveDataLegendEntry* Entry = Legend ? Legend->FindParameter(Name) : nullptr;
+	return Entry ? PrimitiveDataEntryLabel(*Entry) : FText::FromName(Name);
 }
 
 TSharedRef<SWidget> SGraphPinPrimitiveDataParameter::GetDefaultValueWidget()
@@ -85,10 +69,10 @@ TSharedRef<SWidget> SGraphPinPrimitiveDataParameter::GetDefaultValueWidget()
 				{
 					return FText::GetEmpty();
 				}
-				const UK2Node_SetIndexedPrimitiveData* Node = GetNode();
-				if (!Node || !Node->GetIndex())
+				const UK2Node_SetNamedPrimitiveData* Node = GetNode();
+				if (!Node || !Node->GetLegend())
 				{
-					return LOCTEXT("PickIndex", "Choose an index first");
+					return LOCTEXT("PickLegend", "Choose a legend first");
 				}
 				const FString Current = GraphPinObj->GetDefaultAsString();
 				return Current.IsEmpty() ? LOCTEXT("PickParameter", "Choose a parameter") : LabelFor(FName(*Current));
@@ -117,8 +101,8 @@ void SGraphPinPrimitiveDataParameter::OnSelected(TSharedPtr<FName> Item, ESelect
 
 TSharedPtr<SGraphPin> FPrimitiveDataParameterPinFactory::CreatePin(UEdGraphPin* Pin) const
 {
-	if (Pin && Pin->PinName == UK2Node_SetIndexedPrimitiveData::ParameterPinName
-		&& Cast<UK2Node_SetIndexedPrimitiveData>(Pin->GetOwningNodeUnchecked()))
+	if (Pin && Pin->PinName == UK2Node_SetNamedPrimitiveData::ParameterPinName
+		&& Cast<UK2Node_SetNamedPrimitiveData>(Pin->GetOwningNodeUnchecked()))
 	{
 		return SNew(SGraphPinPrimitiveDataParameter, Pin);
 	}

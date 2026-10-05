@@ -3,16 +3,16 @@
 #include "CoreMinimal.h"
 #include "Factories/Factory.h"
 
-#include "PrimitiveDataIndexFactory.generated.h"
+#include "PrimitiveDataLegendFactory.generated.h"
 
-/** Content Browser > Add > Materials > Primitive Data Index. */
+/** Content Browser > Add > Materials > Primitive Data Legend. */
 UCLASS()
-class UPrimitiveDataIndexFactory : public UFactory
+class UPrimitiveDataLegendFactory : public UFactory
 {
 	GENERATED_BODY()
 
 public:
-	UPrimitiveDataIndexFactory();
+	UPrimitiveDataLegendFactory();
 
 	virtual UObject* FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags,
 		UObject* Context, FFeedbackContext* Warn) override;

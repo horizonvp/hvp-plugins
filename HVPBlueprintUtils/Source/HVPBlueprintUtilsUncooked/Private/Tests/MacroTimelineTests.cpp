@@ -24,7 +24,7 @@
 
 namespace MacroTimelineTests
 {
-	const TCHAR* LibraryPath = TEXT("/HVPBlueprintUtils/BlueprintMacroTimeline_BP.BlueprintMacroTimeline_BP");
+	const TCHAR* LibraryPath = TEXT("/HVPBlueprintUtils/BlueprintMacroTimeline_BML.BlueprintMacroTimeline_BML");
 	const TCHAR* EnumPath = TEXT("/HVPBlueprintUtils/MacroTimelineDirection_E.MacroTimelineDirection_E");
 	const TCHAR* MacroName = TEXT("Macro Timeline");
 

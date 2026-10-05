@@ -10,6 +10,7 @@ between projects by hand.
 | `HVPStereoButton` | Hand-pressable VR button drawn through a depth-composited stereo layer. | yes | yes |
 | `HVPEditor` | Stateless editor tools: naming conventions, graph select, palette generator, reference check. Safe to enable or disable per project. | no | no |
 | `HVPPrimitiveData` | Named custom primitive data: a Primitive Data Legend asset and the Set Named Primitive Data nodes (single and multiple). Once a project uses a node its assets depend on the plugin, so it stays separate from `HVPEditor`. | one function (the multiple node's single update) | no |
+| `HVPBlueprintUtils` | Small general-purpose Blueprint tools: the Switch on Float node, and the Linear Oscillate, Fold Float Over and Macro Timeline macros. | only `MacroTimelineDirection_E` (the node and macros expand away at compile time) | yes |
 | `HVPCodeAnimWeb` | Code Animation Web: a state enum, a set of animation outputs, and how each state drives them, with mid-transition state changes. Blueprint nodes and a graph view in the asset editor. | yes | no |
 
 `HVPHost/` is a build fixture, not a template. It exists so every tag compiles and the smoke tests

@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "HVP Blueprint Utils",
+	"Description": "Small general-purpose Blueprint tools: the Switch on Float node (one exec output per numeric range, with the step alpha inside whichever range fired), and the Linear Oscillate, Fold Float Over and Macro Timeline macros. The node expands into engine nodes when a Blueprint compiles; the macros expand inline, so the only thing from this plugin a packaged build carries is the MacroTimelineDirection_E enum Macro Timeline uses.",
+	"Category": "HVP",
+	"CreatedBy": "Horizon VP",
+	"CanContainContent": true,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "HVPBlueprintUtilsUncooked",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
+		}
+	]
+}

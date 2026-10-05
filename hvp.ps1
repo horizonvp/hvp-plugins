@@ -59,7 +59,7 @@ $LegacyPlugins = @(
     'HVPSystems', 'HVPCodeAnimWeb', 'HorizonStereoButton', 'HorizonNamingConventions',
     'HorizonGraphSelect', 'HorizonPalette', 'HorizonPrimitiveData'
 )
-$NewPlugins = @('HVPSystems', 'HVPStereoButton', 'HVPEditor', 'HVPPrimitiveData', 'HVPCodeAnimWeb')
+$NewPlugins = @('HVPSystems', 'HVPStereoButton', 'HVPEditor', 'HVPPrimitiveData', 'HVPCodeAnimWeb', 'HVPBlueprintUtils')
 
 $RedirectBlock = @'
 

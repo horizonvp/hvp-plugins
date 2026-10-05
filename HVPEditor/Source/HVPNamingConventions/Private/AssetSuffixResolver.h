@@ -45,7 +45,7 @@ private:
 	TArray<FRule> Rules;
 
 	/**
-	 * _BP, _AC, _BFL, _BI and _SMC all share the exact class UBlueprint, so depth can't
+	 * _BP, _AC, _AW, _BFL, _BI, _BML and _SMC all share the exact class UBlueprint, so depth can't
 	 * separate them — they're told apart by BlueprintType and ParentClass instead.
 	 */
 	static FString ResolveBlueprintSuffix(const UObject* Asset);

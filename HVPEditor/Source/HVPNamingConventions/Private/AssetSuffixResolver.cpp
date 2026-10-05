@@ -12,7 +12,7 @@ namespace
 	/**
 	 * Suffix -> class path. Order here is presentational only; resolution is by depth.
 	 *
-	 * _AC, _BFL, _BI, _BML and _SMC are absent on purpose: they're all plain UBlueprint and are
+	 * _AC, _AW, _BFL, _BI, _BML and _SMC are absent on purpose: they're all plain UBlueprint and are
 	 * handled by ResolveBlueprintSuffix below.
 	 *
 	 * A new suffix needs TWO entries: one here (or in ResolveBlueprintSuffix) so the watcher knows
@@ -192,7 +192,15 @@ FString FAssetSuffixResolver::ResolveBlueprintSuffix(const UObject* Asset)
 
 	if (const UClass* Parent = Blueprint->ParentClass)
 	{
-		// Most specific first: a StaticMeshComponent is also an ActorComponent.
+		// Most specific first: an Animation Web and a StaticMeshComponent are both ActorComponents.
+		// The web's class is looked up by path, like _PDL's, so a project without HVPCodeAnimWeb
+		// just never matches it.
+		static const TCHAR* const AnimationWebClassPath = TEXT("/Script/HVPCodeAnimWeb.CodeAnimationWeb");
+		if (const UClass* AnimationWeb = FindObject<UClass>(nullptr, AnimationWebClassPath);
+			AnimationWeb && Parent->IsChildOf(AnimationWeb))
+		{
+			return TEXT("_AW");
+		}
 		if (Parent->IsChildOf(UStaticMeshComponent::StaticClass()))
 		{
 			return TEXT("_SMC");

@@ -18,6 +18,7 @@ namespace
 		{ TEXT("_BP"),    TEXT("Blueprint class") },
 		{ TEXT("_BML"),   TEXT("Blueprint Macro Library") },
 		{ TEXT("_PDL"),   TEXT("Primitive Data Legend") },
+		{ TEXT("_AW"),    TEXT("Code Animation Web") },
 		{ TEXT("_ABP"),   TEXT("Animation Blueprint") },
 		{ TEXT("_WBP"),   TEXT("Widget Blueprint") },
 		{ TEXT("_A"),     TEXT("Animation Sequence") },

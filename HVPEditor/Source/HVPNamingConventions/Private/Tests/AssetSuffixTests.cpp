@@ -6,6 +6,7 @@
 #include "AssetSuffixResolver.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -41,6 +42,20 @@ bool FAssetSuffixBlueprintTypesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Function library -> _BFL"), Resolver.ResolveSuffix(Functions.Get()), FString(TEXT("_BFL")));
 	TestEqual(TEXT("Actor Blueprint -> _BP"), Resolver.ResolveSuffix(Actor.Get()), FString(TEXT("_BP")));
 
+	const TStrongObjectPtr<UBlueprint> Component = MakeBlueprint(TEXT("NamingProbeComponent"), UActorComponent::StaticClass(), BPTYPE_Normal);
+	TestEqual(TEXT("Actor component Blueprint -> _AC"), Resolver.ResolveSuffix(Component.Get()), FString(TEXT("_AC")));
+
+	// _AW, like _PDL below, only applies where its plugin (HVPCodeAnimWeb) is enabled.
+	if (UClass* WebClass = FindObject<UClass>(nullptr, TEXT("/Script/HVPCodeAnimWeb.CodeAnimationWeb")))
+	{
+		const TStrongObjectPtr<UBlueprint> Web = MakeBlueprint(TEXT("NamingProbeWeb"), WebClass, BPTYPE_Normal);
+		TestEqual(TEXT("Animation Web -> _AW, not _AC"), Resolver.ResolveSuffix(Web.Get()), FString(TEXT("_AW")));
+	}
+	else
+	{
+		AddInfo(TEXT("HVPCodeAnimWeb is not enabled here; _AW resolution skipped."));
+	}
+
 	// _PDL resolves by class path, so it only applies where HVPPrimitiveData is enabled.
 	if (UClass* LegendClass = FindObject<UClass>(nullptr, TEXT("/Script/HVPPrimitiveDataUncooked.PrimitiveDataLegend")))
 	{
@@ -56,6 +71,7 @@ bool FAssetSuffixBlueprintTypesTest::RunTest(const FString& Parameters)
 	const FAssetNamingConfig Config = FAssetNamingConfig::Load(TEXT("Tools/Conventions/conventions.json"));
 	TestEqual(TEXT("'Utility_BML' already has _BML"), Config.FindTrailingSuffix(TEXT("Utility_BML")), FString(TEXT("_BML")));
 	TestEqual(TEXT("'Rocks_PDL' already has _PDL"), Config.FindTrailingSuffix(TEXT("Rocks_PDL")), FString(TEXT("_PDL")));
+	TestEqual(TEXT("'DeviceWeb_AW' already has _AW"), Config.FindTrailingSuffix(TEXT("DeviceWeb_AW")), FString(TEXT("_AW")));
 	TestEqual(TEXT("'Utility_BML_BP' ends in _BP"), Config.FindTrailingSuffix(TEXT("Utility_BML_BP")), FString(TEXT("_BP")));
 
 	return true;

@@ -9,7 +9,8 @@ between projects by hand.
 | `HVPSystems` | Runtime systems: AnimatedGameflow, CodeAnimation, HandGrab. Editor module with the gameflow smoke test and the state-rename commandlet. | yes | no |
 | `HVPStereoButton` | Hand-pressable VR button drawn through a depth-composited stereo layer. | yes | yes |
 | `HVPEditor` | Stateless editor tools: naming conventions, graph select, palette generator, reference check. Safe to enable or disable per project. | no | no |
-| `HVPPrimitiveData` | Named custom primitive data with a Blueprint node. Once a project uses the node its assets depend on the plugin, so it stays separate from `HVPEditor`. | no (uncooked only) | no |
+| `HVPPrimitiveData` | Named custom primitive data: a Primitive Data Legend asset and the Set Named Primitive Data nodes (single and multiple). Once a project uses a node its assets depend on the plugin, so it stays separate from `HVPEditor`. | one function (the multiple node's single update) | no |
+| `HVPCodeAnimWeb` | Code Animation Web: a state enum, a set of animation outputs, and how each state drives them, with mid-transition state changes. Blueprint nodes and a graph view in the asset editor. | yes | no |
 
 `HVPHost/` is a build fixture, not a template. It exists so every tag compiles and the smoke tests
 run against a project that contains nothing but the plugins. New projects are cloned from the most
@@ -52,7 +53,7 @@ git cherry-pick -X subtree=Plugins/HVP <sha>
 hvp.ps1 add v1.0.0 -Project C:\dev\biogen-lupus -RemoveLegacy -ApplyRedirects
 ```
 
-This removes `Plugins/HVPSystems` and `Plugins/Horizon*` in one commit, adds the subtree in the next,
+This removes `Plugins/HVPSystems`, `Plugins/HVPCodeAnimWeb` and `Plugins/Horizon*` in one commit, adds the subtree in the next,
 then rewrites the `.uproject` plugin list, appends the rename redirects to `Config/DefaultEngine.ini`
 and renames the settings sections in `Config/DefaultEditor.ini`. Rebuild, open the project, resave
 the assets that referenced the old names, and delete the redirect block.

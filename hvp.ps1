@@ -56,10 +56,10 @@ $DefaultUrl = 'git@github.com:horizonvp/hvp-plugins.git'
 $DefaultPrefix = 'Plugins/HVP'
 
 $LegacyPlugins = @(
-    'HVPSystems', 'HorizonStereoButton', 'HorizonNamingConventions',
+    'HVPSystems', 'HVPCodeAnimWeb', 'HorizonStereoButton', 'HorizonNamingConventions',
     'HorizonGraphSelect', 'HorizonPalette', 'HorizonPrimitiveData'
 )
-$NewPlugins = @('HVPSystems', 'HVPStereoButton', 'HVPEditor', 'HVPPrimitiveData')
+$NewPlugins = @('HVPSystems', 'HVPStereoButton', 'HVPEditor', 'HVPPrimitiveData', 'HVPCodeAnimWeb')
 
 $RedirectBlock = @'
 
@@ -74,6 +74,7 @@ $RedirectBlock = @'
 +PackageRedirects=(OldName="/HorizonStereoButton/...",NewName="/HVPStereoButton/",MatchWildcard=true)
 +PackageRedirects=(OldName="/Script/HorizonPrimitiveDataUncooked",NewName="/Script/HVPPrimitiveDataUncooked")
 +PackageRedirects=(OldName="/Script/HorizonPrimitiveDataEditor",NewName="/Script/HVPPrimitiveDataEditor")
++PackageRedirects=(OldName="/Script/HorizonPrimitiveDataRuntime",NewName="/Script/HVPPrimitiveDataRuntime")
 '@
 
 # ---------------------------------------------------------------------------------------------

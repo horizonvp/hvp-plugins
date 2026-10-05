@@ -102,9 +102,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMacroTimelineRunTest, "HVP.BlueprintUtils.Macr
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * End to end, from a consumer's side: an actor Blueprint drops in Macro Timeline, stores its Position
- * and Direction in its own variables (Direction typed by the plugin enum, which is where a stale enum
- * shows up as a compile error), and plays forward then reverse in a ticking game world.
+ * End to end, from a consumer's side: an actor Blueprint drops in Macro Timeline, stores its Elapsed
+ * Time, Alpha and Direction in its own variables (Direction typed by the plugin enum, which is where a
+ * stale enum shows up as a compile error), and plays forward then reverse in a ticking game world.
  */
 bool FMacroTimelineRunTest::RunTest(const FString& Parameters)
 {
@@ -134,7 +134,8 @@ bool FMacroTimelineRunTest::RunTest(const FString& Parameters)
 	FEdGraphPinType RealType(UEdGraphSchema_K2::PC_Real, UEdGraphSchema_K2::PC_Double, nullptr, EPinContainerType::None, false, FEdGraphTerminalType());
 	FEdGraphPinType DirectionType(UEdGraphSchema_K2::PC_Byte, NAME_None, Direction, EPinContainerType::None, false, FEdGraphTerminalType());
 	FEdGraphPinType BoolType(UEdGraphSchema_K2::PC_Boolean, NAME_None, nullptr, EPinContainerType::None, false, FEdGraphTerminalType());
-	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastPosition"), RealType);
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastElapsed"), RealType);
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastAlpha"), RealType);
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastDirection"), DirectionType);
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("bFinished"), BoolType);
 
@@ -174,20 +175,35 @@ bool FMacroTimelineRunTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("The instance's Direction pin is typed by the plugin enum"),
 		TimelineDirection->PinType.PinSubCategoryObject.Get(), static_cast<UObject*>(Direction));
 
-	UK2Node_VariableSet* SetPosition = AddSet(TEXT("LastPosition"));
+	// The macro's public pin names: a rename inside the macro breaks every consumer's wiring, so check
+	// them by name before relying on them.
+	for (const TCHAR* PinName : { TEXT("Play"), TEXT("Reverse from End"), TEXT("Duration"), TEXT("Update"),
+		TEXT("Elapsed Time"), TEXT("Alpha"), TEXT("Finished") })
+	{
+		if (!TestNotNull(FString::Printf(TEXT("Instance has a '%s' pin"), PinName), Timeline->FindPin(PinName)))
+		{
+			return false;
+		}
+	}
+
+	UK2Node_VariableSet* SetElapsed = AddSet(TEXT("LastElapsed"));
+	UK2Node_VariableSet* SetAlpha = AddSet(TEXT("LastAlpha"));
 	UK2Node_VariableSet* SetDirection = AddSet(TEXT("LastDirection"));
 	UK2Node_VariableSet* SetFinished = AddSet(TEXT("bFinished"));
 
+	// Update -> Elapsed -> Alpha -> Direction; Finished -> bFinished = true.
 	bool bWired = true;
 	bWired &= Schema->TryCreateConnection(Forward->FindPinChecked(UEdGraphSchema_K2::PN_Then), Timeline->FindPinChecked(TEXT("Play")));
 	bWired &= Schema->TryCreateConnection(Backward->FindPinChecked(UEdGraphSchema_K2::PN_Then), Timeline->FindPinChecked(TEXT("Reverse from End")));
-	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Update")), SetPosition->GetExecPin());
-	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Position")), SetPosition->FindPinChecked(TEXT("LastPosition")));
-	bWired &= Schema->TryCreateConnection(SetPosition->FindPinChecked(UEdGraphSchema_K2::PN_Then), SetDirection->GetExecPin());
+	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Update")), SetElapsed->GetExecPin());
+	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Elapsed Time")), SetElapsed->FindPinChecked(TEXT("LastElapsed")));
+	bWired &= Schema->TryCreateConnection(SetElapsed->FindPinChecked(UEdGraphSchema_K2::PN_Then), SetAlpha->GetExecPin());
+	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Alpha")), SetAlpha->FindPinChecked(TEXT("LastAlpha")));
+	bWired &= Schema->TryCreateConnection(SetAlpha->FindPinChecked(UEdGraphSchema_K2::PN_Then), SetDirection->GetExecPin());
 	bWired &= Schema->TryCreateConnection(TimelineDirection, SetDirection->FindPinChecked(TEXT("LastDirection")));
 	bWired &= Schema->TryCreateConnection(Timeline->FindPinChecked(TEXT("Finished")), SetFinished->GetExecPin());
 	TestTrue(TEXT("Graph wired"), bWired);
-	Schema->TrySetDefaultValue(*Timeline->FindPinChecked(TEXT("Length")), TEXT("0.25"));
+	Schema->TrySetDefaultValue(*Timeline->FindPinChecked(TEXT("Duration")), TEXT("0.25"));
 	Schema->TrySetDefaultValue(*SetFinished->FindPinChecked(TEXT("bFinished")), TEXT("true"));
 
 	FCompilerResultsLog Results;
@@ -221,16 +237,18 @@ bool FMacroTimelineRunTest::RunTest(const FString& Parameters)
 	}
 
 	UClass* Class = Actor->GetClass();
-	const FDoubleProperty* PositionProp = FindFProperty<FDoubleProperty>(Class, TEXT("LastPosition"));
+	const FDoubleProperty* ElapsedProp = FindFProperty<FDoubleProperty>(Class, TEXT("LastElapsed"));
+	const FDoubleProperty* AlphaProp = FindFProperty<FDoubleProperty>(Class, TEXT("LastAlpha"));
 	const FByteProperty* DirectionProp = FindFProperty<FByteProperty>(Class, TEXT("LastDirection"));
 	const FBoolProperty* FinishedProp = FindFProperty<FBoolProperty>(Class, TEXT("bFinished"));
-	if (!TestTrue(TEXT("Variables compiled"), PositionProp && DirectionProp && FinishedProp))
+	if (!TestTrue(TEXT("Variables compiled"), ElapsedProp && AlphaProp && DirectionProp && FinishedProp))
 	{
 		GEngine->DestroyWorldContext(World);
 		World->DestroyWorld(false);
 		return false;
 	}
-	auto Position = [&]() { return PositionProp->GetPropertyValue_InContainer(Actor); };
+	auto Elapsed = [&]() { return ElapsedProp->GetPropertyValue_InContainer(Actor); };
+	auto Alpha = [&]() { return AlphaProp->GetPropertyValue_InContainer(Actor); };
 	auto DirectionName = [&]() { return Direction->GetDisplayNameTextByValue(DirectionProp->GetPropertyValue_InContainer(Actor)).ToString(); };
 	auto Finished = [&]() { return FinishedProp->GetPropertyValue_InContainer(Actor); };
 	auto Tick = [World](int32 Frames)
@@ -245,29 +263,38 @@ bool FMacroTimelineRunTest::RunTest(const FString& Parameters)
 		Actor->ProcessEvent(Actor->FindFunction(Name), nullptr);
 	};
 
-	// Forward: 0.25 s at 60 fps. Part way, it is moving and not finished; well past, it has finished at Length.
+	auto Report = [&](const TCHAR* When)
+	{
+		AddInfo(FString::Printf(TEXT("%s: elapsed %.4f, alpha %.4f, direction %s, finished %d"),
+			When, Elapsed(), Alpha(), *DirectionName(), Finished()));
+		TestEqual(FString::Printf(TEXT("%s: Alpha is Elapsed Time / Duration"), When), Alpha(), Elapsed() / 0.25, 1e-4);
+	};
+
+	// Forward: 0.25 s at 60 fps. Part way, it is moving and not finished; well past, it has finished at Duration.
 	Call(TEXT("PlayForward"));
 	Tick(6);
-	AddInfo(FString::Printf(TEXT("Forward, 6 frames: position %.4f, direction %s, finished %d"), Position(), *DirectionName(), Finished()));
-	TestTrue(TEXT("Forward: moving part way"), Position() > 0.0 && Position() < 0.25);
+	Report(TEXT("Forward, 6 frames"));
+	TestTrue(TEXT("Forward: moving part way"), Elapsed() > 0.0 && Elapsed() < 0.25);
 	TestFalse(TEXT("Forward: not finished part way"), Finished());
 	TestEqual(TEXT("Forward: direction"), DirectionName(), FString(TEXT("Forward")));
 	Tick(30);
-	AddInfo(FString::Printf(TEXT("Forward, 36 frames: position %.4f, direction %s, finished %d"), Position(), *DirectionName(), Finished()));
+	Report(TEXT("Forward, 36 frames"));
 	TestTrue(TEXT("Forward: finished"), Finished());
-	TestEqual(TEXT("Forward: ends at Length"), Position(), 0.25, 1e-4);
+	TestEqual(TEXT("Forward: ends at Duration"), Elapsed(), 0.25, 1e-4);
+	TestEqual(TEXT("Forward: Alpha ends at 1"), Alpha(), 1.0, 1e-4);
 
 	// Reverse from the end: back down to 0.
 	FinishedProp->SetPropertyValue_InContainer(Actor, false);
 	Call(TEXT("PlayReverse"));
 	Tick(6);
-	AddInfo(FString::Printf(TEXT("Reverse, 6 frames: position %.4f, direction %s, finished %d"), Position(), *DirectionName(), Finished()));
-	TestTrue(TEXT("Reverse: moving part way"), Position() > 0.0 && Position() < 0.25);
+	Report(TEXT("Reverse, 6 frames"));
+	TestTrue(TEXT("Reverse: moving part way"), Elapsed() > 0.0 && Elapsed() < 0.25);
 	TestEqual(TEXT("Reverse: direction"), DirectionName(), FString(TEXT("Reverse")));
 	Tick(30);
-	AddInfo(FString::Printf(TEXT("Reverse, 36 frames: position %.4f, direction %s, finished %d"), Position(), *DirectionName(), Finished()));
+	Report(TEXT("Reverse, 36 frames"));
 	TestTrue(TEXT("Reverse: finished"), Finished());
-	TestEqual(TEXT("Reverse: ends at 0"), Position(), 0.0, 1e-4);
+	TestEqual(TEXT("Reverse: ends at 0"), Elapsed(), 0.0, 1e-4);
+	TestEqual(TEXT("Reverse: Alpha ends at 0"), Alpha(), 0.0, 1e-4);
 
 	GEngine->DestroyWorldContext(World);
 	World->DestroyWorld(false);

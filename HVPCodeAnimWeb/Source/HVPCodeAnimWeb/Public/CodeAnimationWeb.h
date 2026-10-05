@@ -245,6 +245,14 @@ private:
 	FInstancedPropertyBag OutputDefaults;
 
 public:
+	/**
+	 * Every graph the Web made for itself - state, transition and Custom Lerp graphs - by graph GUID.
+	 * Only these are ever deleted when their state, transition or Custom Lerp goes; a function made by
+	 * hand is never touched, whatever it is called.
+	 */
+	UPROPERTY()
+	TArray<FGuid> OwnedGraphs;
+
 	/** Where the Web Graph's Entry node sits. */
 	UPROPERTY()
 	FVector2D WebGraphEntryPosition = FVector2D::ZeroVector;

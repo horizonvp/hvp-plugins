@@ -187,9 +187,11 @@ void FCodeAnimOutputVariableDetails::SetOutput(bool bOutput)
 		FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(BlueprintPtr, VariableName, nullptr, CodeAnimWeb::LerpMetaKey);
 	}
 
-	// The output's On <Output> Changed dispatcher appears (or goes) straight away; the rest takes
-	// effect on compile, like any other change to a variable.
+	// The output's On <Output> Changed dispatcher appears (or goes) straight away, as does a Custom
+	// Lerp graph it no longer has a use for; the rest takes effect on compile, like any other change
+	// to a variable.
 	CodeAnimWebEvents::Reconcile(BlueprintPtr);
+	CodeAnimWebGraphs::RemoveUnusedGraphs(BlueprintPtr);
 	FBlueprintEditorUtils::MarkBlueprintAsModified(BlueprintPtr);
 }
 
@@ -227,6 +229,8 @@ void FCodeAnimOutputVariableDetails::SetLerp(ECodeAnimLerpPolicy Lerp)
 		FBlueprintEditorUtils::SetBlueprintVariableMetaData(BlueprintPtr, VariableName, nullptr, CodeAnimWeb::LerpMetaKey,
 			StaticEnum<ECodeAnimLerpPolicy>()->GetNameStringByValue(static_cast<int64>(Lerp)));
 	}
+	// Off Custom: its Custom Lerp graph goes, in this transaction, so undo brings it back.
+	CodeAnimWebGraphs::RemoveUnusedGraphs(BlueprintPtr);
 	FBlueprintEditorUtils::MarkBlueprintAsModified(BlueprintPtr);
 }
 

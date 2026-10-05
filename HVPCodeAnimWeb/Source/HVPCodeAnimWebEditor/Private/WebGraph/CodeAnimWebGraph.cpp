@@ -432,7 +432,7 @@ void UCodeAnimWebGraphSchema::GetContextMenuActions(UToolMenu* Menu, UGraphNodeC
 			LOCTEXT("ReverseTip", "Swap From and To."), FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([Graph, Index]() { CodeAnimWebGraphEdits::Reverse(Graph, Index); })));
 		Section.AddMenuEntry(TEXT("Delete"), LOCTEXT("Delete", "Delete Transition"),
-			LOCTEXT("DeleteTip", "The pair falls back to the Default Transition. Its graph, if any, stays in My Blueprint."), FSlateIcon(),
+			LOCTEXT("DeleteTip", "The pair falls back to the Default Transition. Its graph, if it has one, is deleted with it."), FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([Graph, Index]() { CodeAnimWebGraphEdits::RemoveTransitions(Graph, { Index }); })));
 	}
 }
@@ -456,6 +456,11 @@ namespace CodeAnimWebGraphEdits
 			const FScopedTransaction Transaction(Description);
 			Defaults->Modify();
 			Edit(*Defaults);
+			// The graphs follow in the same transaction, so one undo puts everything back: a deleted
+			// transition's graph goes, a reversed or redirected one is renamed to match.
+			UBlueprint* Blueprint = Defaults->GetWebBlueprint();
+			CodeAnimWebGraphs::RemoveUnusedGraphs(Blueprint);
+			CodeAnimWebGraphs::RenameGraphsToMatch(Blueprint);
 		}
 		Graph->OnDataChanged.Broadcast();
 	}

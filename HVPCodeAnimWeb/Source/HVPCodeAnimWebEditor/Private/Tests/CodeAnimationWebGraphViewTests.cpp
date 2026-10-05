@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "CodeAnimWebTestFixture.h"
+#include "CodeAnimWebGraphs.h"
 
 #include "Framework/Application/SlateApplication.h"
 #include "IDetailsView.h"
@@ -117,6 +118,130 @@ bool FCodeAnimWebGraphViewTest::RunTest(const FString& Parameters)
 	Graph->Rebuild();
 	TestEqual(TEXT("Delete removes the row"), Fixture.Defaults()->Transitions.Num(), 0);
 	TestEqual(TEXT("...and the arrow"), CountOf(UCodeAnimWebGraphTransitionNode::StaticClass()), 0);
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCodeAnimWebGraphCleanupTest, "HVP.CodeAnimWeb.GraphCleanup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * A Web's graphs go when their owners do - a transition deleted in the Web Graph, an output taken off
+ * Custom, a state's graph unlinked - and a function made by hand never does, even named like one.
+ */
+bool FCodeAnimWebGraphCleanupTest::RunTest(const FString& Parameters)
+{
+	using namespace CodeAnimWebTests;
+
+	FFixture Fixture;
+	UBlueprint* BP = Fixture.Blueprint.Get();
+	UUserDefinedEnum* Enum = Fixture.Enum.Get();
+	const FName Key0(Enum->GetNameStringByIndex(0));
+	const FName Key1(Enum->GetNameStringByIndex(1));
+
+	FCodeAnimWebTransition& Transition = Fixture.Defaults()->Transitions.AddDefaulted_GetRef();
+	Transition.From.Key = Key0;
+	Transition.To.Key = Key1;
+	const FGuid TransitionGraph = CodeAnimWebGraphs::OpenOrCreateTransitionGraph(Fixture.Defaults(), 0, false)->GraphGuid;
+	const FGuid StateGraph = CodeAnimWebGraphs::OpenOrCreateStateGraph(Fixture.Defaults(), Key1, false)->GraphGuid;
+	FBlueprintEditorUtils::SetBlueprintVariableMetaData(BP, TEXT("Scale"), nullptr, CodeAnimWeb::LerpMetaKey, TEXT("Custom"));
+	const FGuid LerpGraph = CodeAnimWebGraphs::OpenOrCreateCustomLerpGraph(BP, TEXT("Scale"), false)->GraphGuid;
+
+	// Someone's own function, named as if it were a transition graph.
+	UEdGraph* Mine = FBlueprintEditorUtils::CreateNewGraph(BP, TEXT("Transition_Mine"), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+	FBlueprintEditorUtils::AddFunctionGraph<UClass>(BP, Mine, /*bIsUserCreated*/ true, nullptr);
+	const FGuid MyGraph = Mine->GraphGuid;
+
+	auto Has = [BP](const FGuid& Guid) { return CodeAnimWebGraphs::FindGraph(BP, Guid) != nullptr; };
+	TestTrue(TEXT("All four graphs exist"), Has(TransitionGraph) && Has(StateGraph) && Has(LerpGraph) && Has(MyGraph));
+	TestEqual(TEXT("The Web records the three it made"), Fixture.Defaults()->OwnedGraphs.Num(), 3);
+	TestFalse(TEXT("Nothing to remove while every owner is there"), CodeAnimWebGraphs::RemoveUnusedGraphs(BP));
+
+	// Deleting the transition in the Web Graph deletes its graph.
+	const TStrongObjectPtr<UCodeAnimWebEdGraph> Holder(NewObject<UCodeAnimWebEdGraph>(GetTransientPackage(), NAME_None, RF_Transient));
+	UCodeAnimWebEdGraph* Graph = Holder.Get();
+	Graph->Schema = UCodeAnimWebGraphSchema::StaticClass();
+	Graph->Blueprint = BP;
+	Graph->Rebuild();
+	CodeAnimWebGraphEdits::RemoveTransitions(Graph, { 0 });
+	TestFalse(TEXT("Transition graph deleted with the transition"), Has(TransitionGraph));
+	TestTrue(TEXT("The others stay"), Has(StateGraph) && Has(LerpGraph) && Has(MyGraph));
+
+	// Taking the output off Custom deletes its Custom Lerp graph and entry.
+	FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(BP, TEXT("Scale"), nullptr, CodeAnimWeb::LerpMetaKey);
+	TestTrue(TEXT("Off Custom: something removed"), CodeAnimWebGraphs::RemoveUnusedGraphs(BP));
+	TestFalse(TEXT("Custom Lerp graph deleted"), Has(LerpGraph));
+	TestEqual(TEXT("Custom Lerp entry gone"), Fixture.Defaults()->CustomLerps.Num(), 0);
+
+	// A Web from before the record: graphs in use are adopted, then go with their owner like any other.
+	Fixture.Defaults()->OwnedGraphs.Reset();
+	TestFalse(TEXT("Adopting removes nothing"), CodeAnimWebGraphs::RemoveUnusedGraphs(BP));
+	TestTrue(TEXT("The state graph adopted"), Fixture.Defaults()->OwnedGraphs.Contains(StateGraph));
+	TestFalse(TEXT("A function it did not make is not adopted"), Fixture.Defaults()->OwnedGraphs.Contains(MyGraph));
+	Fixture.Entry(1).GraphGuid = FGuid();
+	TestTrue(TEXT("State graph unlinked: removed"), CodeAnimWebGraphs::RemoveUnusedGraphs(BP));
+	TestFalse(TEXT("State graph deleted"), Has(StateGraph));
+
+	TestTrue(TEXT("The hand-made function survives all of it"), Has(MyGraph));
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCodeAnimWebGraphNamesTest, "HVP.CodeAnimWeb.GraphNames",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/** A Web's graph names follow their owners - direction, ends, output name - unless renamed by hand. */
+bool FCodeAnimWebGraphNamesTest::RunTest(const FString& Parameters)
+{
+	using namespace CodeAnimWebTests;
+
+	FFixture Fixture;
+	UBlueprint* BP = Fixture.Blueprint.Get();
+	UUserDefinedEnum* Enum = Fixture.Enum.Get();
+	const FString S0 = Enum->GetDisplayNameTextByIndex(0).ToString();
+	const FString S1 = Enum->GetDisplayNameTextByIndex(1).ToString();
+	const FString S2 = Enum->GetDisplayNameTextByIndex(2).ToString();
+
+	for (const int32 To : { 1, 2 })
+	{
+		FCodeAnimWebTransition& Transition = Fixture.Defaults()->Transitions.AddDefaulted_GetRef();
+		Transition.From.Key = FName(Enum->GetNameStringByIndex(0));
+		Transition.To.Key = FName(Enum->GetNameStringByIndex(To));
+	}
+	UEdGraph* First = CodeAnimWebGraphs::OpenOrCreateTransitionGraph(Fixture.Defaults(), 0, false);
+	UEdGraph* Second = CodeAnimWebGraphs::OpenOrCreateTransitionGraph(Fixture.Defaults(), 1, false);
+	TestEqual(TEXT("Named at creation"), First->GetName(), FString::Printf(TEXT("Transition_%s_To_%s"), *S0, *S1));
+
+	const TStrongObjectPtr<UCodeAnimWebEdGraph> Holder(NewObject<UCodeAnimWebEdGraph>(GetTransientPackage(), NAME_None, RF_Transient));
+	UCodeAnimWebEdGraph* Graph = Holder.Get();
+	Graph->Schema = UCodeAnimWebGraphSchema::StaticClass();
+	Graph->Blueprint = BP;
+	Graph->Rebuild();
+
+	// One-way to two-way, and back.
+	CodeAnimWebGraphEdits::SetTwoWay(Graph, 0, true);
+	TestEqual(TEXT("Two-way: renamed"), First->GetName(), FString::Printf(TEXT("Transition_%s_And_%s"), *S0, *S1));
+	TestEqual(TEXT("The Web's record follows"), Fixture.Defaults()->Transitions[0].GraphFunction, First->GetFName());
+	CodeAnimWebGraphEdits::SetTwoWay(Graph, 0, false);
+	TestEqual(TEXT("One-way again"), First->GetName(), FString::Printf(TEXT("Transition_%s_To_%s"), *S0, *S1));
+
+	// Reversed: the ends swap in the name.
+	CodeAnimWebGraphEdits::Reverse(Graph, 0);
+	TestEqual(TEXT("Reversed"), First->GetName(), FString::Printf(TEXT("Transition_%s_To_%s"), *S1, *S0));
+
+	// Renamed by hand: left alone from then on.
+	FBlueprintEditorUtils::RenameGraph(Second, TEXT("MySpecialSwoop"));
+	CodeAnimWebGraphEdits::SetTwoWay(Graph, 1, true);
+	TestEqual(TEXT("A hand-picked name stays"), Second->GetName(), FString(TEXT("MySpecialSwoop")));
+	TestFalse(TEXT("Nothing left to rename"), CodeAnimWebGraphs::RenameGraphsToMatch(BP));
+
+	// A Custom Lerp follows its output's name.
+	FBlueprintEditorUtils::SetBlueprintVariableMetaData(BP, TEXT("Scale"), nullptr, CodeAnimWeb::LerpMetaKey, TEXT("Custom"));
+	UEdGraph* Lerp = CodeAnimWebGraphs::OpenOrCreateCustomLerpGraph(BP, TEXT("Scale"), false);
+	FBlueprintEditorUtils::RenameMemberVariable(BP, TEXT("Scale"), TEXT("Size"));
+	TestTrue(TEXT("Output renamed: something to rename"), CodeAnimWebGraphs::RenameGraphsToMatch(BP));
+	TestEqual(TEXT("Lerp graph follows the output"), Lerp->GetName(), FString(TEXT("Lerp_Size")));
+	(void)S2;
 	return true;
 }
 

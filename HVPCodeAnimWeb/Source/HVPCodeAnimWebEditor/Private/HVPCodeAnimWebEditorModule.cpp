@@ -2,6 +2,7 @@
 #include "BlueprintEditorContext.h"
 #include "BlueprintEditorModule.h"
 #include "CodeAnimationWeb.h"
+#include "CodeAnimWebGraphs.h"
 #include "CodeAnimOutputVariableDetails.h"
 #include "CodeAnimWebEvents.h"
 #include "CodeAnimWebStateDetails.h"
@@ -47,6 +48,8 @@ public:
 			{
 				Defaults->Modify();
 				Defaults->SyncDefinition();
+				// A state renamed in the enum: its graph's name follows.
+				CodeAnimWebGraphs::RenameGraphsToMatch(Defaults->GetWebBlueprint());
 			}
 		}
 	}
@@ -81,6 +84,7 @@ public:
 		{
 			PreCompileHandle = GEditor->OnBlueprintPreCompile().AddRaw(this, &FHVPCodeAnimWebEditorModule::OnBlueprintPreCompile);
 		}
+		PropertyChangedHandle = FCoreUObjectDelegates::OnObjectPropertyChanged.AddRaw(this, &FHVPCodeAnimWebEditorModule::OnObjectPropertyChanged);
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FHVPCodeAnimWebEditorModule::RegisterMenus));
 	}
@@ -96,6 +100,7 @@ public:
 		{
 			GEditor->OnBlueprintPreCompile().Remove(PreCompileHandle);
 		}
+		FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(PropertyChangedHandle);
 		if (TickerHandle.IsValid())
 		{
 			FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
@@ -189,6 +194,28 @@ private:
 		{
 			return;
 		}
+		Schedule(Blueprint);
+	}
+
+	/**
+	 * A Web's settings were edited - a transition row removed in the Details panel, say: delete any
+	 * graph that edit left without an owner. Next tick, outside the edit, as its own undo step.
+	 */
+	void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event)
+	{
+		const UCodeAnimationWeb* Web = Cast<UCodeAnimationWeb>(Object);
+		if (!Web || !Web->HasAnyFlags(RF_ClassDefaultObject) || IsRunningCommandlet() || GIsAutomationTesting)
+		{
+			return;
+		}
+		if (UBlueprint* Blueprint = Web->GetWebBlueprint())
+		{
+			Schedule(Blueprint);
+		}
+	}
+
+	void Schedule(UBlueprint* Blueprint)
+	{
 		PendingWebs.Add(Blueprint);
 		if (!TickerHandle.IsValid())
 		{
@@ -203,7 +230,18 @@ private:
 		const TSet<TWeakObjectPtr<UBlueprint>> Batch = MoveTemp(PendingWebs);
 		for (const TWeakObjectPtr<UBlueprint>& Weak : Batch)
 		{
-			if (UBlueprint* Blueprint = Weak.Get(); Blueprint && CodeAnimWebEvents::Reconcile(Blueprint))
+			UBlueprint* Blueprint = Weak.Get();
+			if (!Blueprint)
+			{
+				continue;
+			}
+			// Graphs whose owner is gone (a transition deleted, an output taken off Custom, a variable
+			// removed). Marks the Blueprint structurally modified itself if it removes any.
+			CodeAnimWebGraphs::RemoveUnusedGraphs(Blueprint);
+			// And names that no longer match: a transition's direction flipped in the Details panel, an
+			// output renamed.
+			CodeAnimWebGraphs::RenameGraphsToMatch(Blueprint);
+			if (CodeAnimWebEvents::Reconcile(Blueprint))
 			{
 				FKismetEditorUtilities::CompileBlueprint(Blueprint);
 			}
@@ -212,6 +250,7 @@ private:
 	}
 
 	FDelegateHandle PreCompileHandle;
+	FDelegateHandle PropertyChangedHandle;
 	FTSTicker::FDelegateHandle TickerHandle;
 	TSet<TWeakObjectPtr<UBlueprint>> PendingWebs;
 

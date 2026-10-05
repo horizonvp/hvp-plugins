@@ -123,7 +123,11 @@ int32 SHVPRadialMenu::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedG
 
 	const UHVPGraphSelectSettings& Settings = *GetDefault<UHVPGraphSelectSettings>();
 
-	const FVector2D Centre(AllottedGeometry.AbsoluteToLocal(AbsoluteCenter));
+	// The centre is a desktop position, but AllottedGeometry is in WINDOW space: converting with it is
+	// off by the window's position on screen, which only vanishes for a window sitting at the desktop
+	// origin (maximised on the main monitor). The tick-space geometry is this same widget in desktop
+	// space - Slate stores it just before OnPaint - and local coordinates are the same in both.
+	const FVector2D Centre(GetTickSpaceGeometry().AbsoluteToLocal(AbsoluteCenter));
 	// DPI scale and the user's preference are one multiplier: everything below is in final pixels.
 	const float Scale = AllottedGeometry.Scale * Settings.UIScale;
 

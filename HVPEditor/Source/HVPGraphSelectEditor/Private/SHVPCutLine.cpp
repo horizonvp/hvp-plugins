@@ -41,13 +41,19 @@ int32 SHVPCutLine::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 	const UHVPGraphSelectSettings& Settings = *GetDefault<UHVPGraphSelectSettings>();
 	const float Scale = AllottedGeometry.Scale * Settings.UIScale;
 
-	const FVector2D Origin(AllottedGeometry.AbsoluteToLocal(AbsoluteOrigin));
+	// The origin and graph rect are desktop positions, but AllottedGeometry is in WINDOW space:
+	// converting with it is off by the window's position on screen, which only vanishes for a window
+	// at the desktop origin (maximised on the main monitor). The tick-space geometry is this same
+	// widget in desktop space - Slate stores it just before OnPaint - and local coordinates are the
+	// same in both.
+	const FGeometry& DesktopGeometry = GetTickSpaceGeometry();
+	const FVector2D Origin(DesktopGeometry.AbsoluteToLocal(AbsoluteOrigin));
 
 	// Bounded by the GRAPH, not the window. Clipping would work too, but confining the geometry
 	// means nothing is ever generated outside the panel in the first place.
-	const FVector2D GraphMin(AllottedGeometry.AbsoluteToLocal(
+	const FVector2D GraphMin(DesktopGeometry.AbsoluteToLocal(
 		FVector2D(AbsoluteGraphRect.Left, AbsoluteGraphRect.Top)));
-	const FVector2D GraphMax(AllottedGeometry.AbsoluteToLocal(
+	const FVector2D GraphMax(DesktopGeometry.AbsoluteToLocal(
 		FVector2D(AbsoluteGraphRect.Right, AbsoluteGraphRect.Bottom)));
 	const float Depth = BleedDepth * Scale;
 

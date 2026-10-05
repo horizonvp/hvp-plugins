@@ -76,6 +76,43 @@ namespace HVPGraphSelectInput
 		return nullptr;
 	}
 
+	/**
+	 * Puts an overlay on the window that actually hosts the panel, and returns that window.
+	 *
+	 * The panel's own window rather than the hit-test path's: the path starts at whichever window
+	 * the OS reported under the cursor, which is not guaranteed to be the one the panel paints into
+	 * once floating windows and monitors with different DPI are involved.
+	 */
+	static TSharedPtr<SWindow> AttachOverlay(const TSharedPtr<SGraphPanel>& Panel,
+		const TSharedPtr<SWindow>& PathWindow, const TSharedRef<SWidget>& Overlay)
+	{
+		TSharedPtr<SWindow> Window = Panel.IsValid()
+			? FSlateApplication::Get().FindWidgetWindow(Panel.ToSharedRef())
+			: nullptr;
+		if (!Window.IsValid())
+		{
+			Window = PathWindow;
+		}
+		if (!Window.IsValid())
+		{
+			UE_LOG(LogHVPGraphSelect, Warning, TEXT("No window found for the graph panel; overlay not shown."));
+			return nullptr;
+		}
+
+		// Logged every time on purpose: when the overlay fails to show on one monitor, this line
+		// says which window it went to and at what DPI.
+		UE_LOG(LogHVPGraphSelect, Log,
+			TEXT("Overlay -> window '%s' (path window '%s') at %s, DPI %.2f, overlay %s"),
+			*Window->GetTitle().ToString(),
+			PathWindow.IsValid() ? *PathWindow->GetTitle().ToString() : TEXT("none"),
+			*Window->GetPositionInScreen().ToString(),
+			Window->GetDPIScaleFactor(),
+			Window->HasOverlay() ? TEXT("yes") : TEXT("NO"));
+
+		Window->AddOverlaySlot(INDEX_NONE)[Overlay];
+		return Window;
+	}
+
 	/** The single selected node in that graph, or null if the selection is empty or ambiguous. */
 	static UEdGraphNode* SoleSelectedNode(UEdGraph* Graph)
 	{
@@ -214,16 +251,12 @@ bool FHVPGraphSelectInput::BeginCut(const FPointerEvent& MouseEvent)
 	const FVector2D PanelLocal(Panel->GetCachedGeometry().AbsoluteToLocal(PressPosition));
 	CutGraphOrigin = FVector2D(Panel->PanelCoordToGraphCoord(PanelLocal));
 
-	if (Window.IsValid())
-	{
-		CutOverlay = SNew(SHVPCutLine);
-		CutOverlay->SetOrigin(PressPosition);
-		CutOverlay->SetGraphRect(Panel->GetCachedGeometry().GetLayoutBoundingRect());
-		CutOverlay->SetMoveMode(false);
-		CutOverlay->SetCardinal(TOptional<EHVPCardinal>());
-		Window->AddOverlaySlot(INDEX_NONE)[CutOverlay.ToSharedRef()];
-		CutWindow = Window;
-	}
+	CutOverlay = SNew(SHVPCutLine);
+	CutOverlay->SetOrigin(PressPosition);
+	CutOverlay->SetGraphRect(Panel->GetCachedGeometry().GetLayoutBoundingRect());
+	CutOverlay->SetMoveMode(false);
+	CutOverlay->SetCardinal(TOptional<EHVPCardinal>());
+	CutWindow = AttachOverlay(Panel, Window, CutOverlay.ToSharedRef());
 	return true;
 }
 
@@ -479,14 +512,10 @@ bool FHVPGraphSelectInput::HandleMouseButtonDownEvent(
 	PressedNode = Node;
 
 	// High ZOrder so the ring sits over the graph and its nodes rather than behind them.
-	if (Window.IsValid())
-	{
-		Radial = SNew(SHVPRadialMenu);
-		Radial->SetCenter(PressPosition);
-		Radial->SetActiveMode(TOptional<EHVPGraphSelectMode>());
-		Window->AddOverlaySlot(INDEX_NONE)[Radial.ToSharedRef()];
-		RadialWindow = Window;
-	}
+	Radial = SNew(SHVPRadialMenu);
+	Radial->SetCenter(PressPosition);
+	Radial->SetActiveMode(TOptional<EHVPGraphSelectMode>());
+	RadialWindow = AttachOverlay(Panel, Window, Radial.ToSharedRef());
 
 	return true;	// consumed: from here the drag belongs to us
 }

@@ -25,10 +25,10 @@ public:
 	void Construct(const FArguments& InArgs);
 
 	/** Screen-space point the gesture started from; the ring is drawn centred here. */
-	void SetCenter(const FVector2D& InAbsoluteCenter) { AbsoluteCenter = InAbsoluteCenter; }
+	void SetCenter(const FVector2D& InAbsoluteCenter) { AbsoluteCenter = InAbsoluteCenter; Invalidate(EInvalidateWidgetReason::Paint); }
 
 	/** Which segment to light up, or unset while inside the dead zone. */
-	void SetActiveMode(const TOptional<EHVPGraphSelectMode>& InMode) { ActiveMode = InMode; }
+	void SetActiveMode(const TOptional<EHVPGraphSelectMode>& InMode) { ActiveMode = InMode; Invalidate(EInvalidateWidgetReason::Paint); }
 
 	//~ SWidget
 	virtual int32 OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry,

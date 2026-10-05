@@ -354,19 +354,26 @@ Ambiguity is settled by **inheritance depth**, not a hand-maintained ordering. B
 deeper, so `_RT` beats `_T`. The same falls out automatically for `_ABP` / `_WBP` / `_CS`
 over `_BP`, and `_IA` over `_DA`.
 
-Five suffixes share the *exact* class `UBlueprint`, so depth cannot separate them. They are
+Six suffixes share the *exact* class `UBlueprint`, so depth cannot separate them. They are
 told apart by `BlueprintType` and `ParentClass` instead:
 
 | Condition | Suffix |
 | --- | --- |
 | `BlueprintType == BPTYPE_Interface` | `_BI` |
 | `BlueprintType == BPTYPE_FunctionLibrary` | `_BFL` |
+| `BlueprintType == BPTYPE_MacroLibrary` | `_BML` |
 | `ParentClass` derives `UStaticMeshComponent` | `_SMC` |
 | `ParentClass` derives `UActorComponent` | `_AC` |
 | otherwise | `_BP` |
 
 All 39 suffixes in `check_conventions.py` resolve deterministically. Nothing is guessed: a
 type with no rule is left alone rather than given a best-effort suffix.
+
+Two suffixes are newer than `check_conventions.py`'s list: `_BML` (above) and `_PDL` for a
+`HVPPrimitiveData` Primitive Data Legend. `_PDL` is resolved by class path like the rest, so a
+project without that plugin simply skips it. A new suffix needs two entries in the source: one
+in `AssetSuffixResolver.cpp` (which type gets it) and one in `AssetNamingConfig.cpp`'s
+`BuiltInSuffixes` (so a name already carrying it is recognised).
 
 Classes are looked up from **path strings at runtime**, not `#include`d. That keeps the
 module's dependencies to engine essentials and lets it load cleanly where Niagara, PCG,

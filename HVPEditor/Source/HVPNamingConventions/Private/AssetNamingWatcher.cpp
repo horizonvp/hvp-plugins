@@ -293,7 +293,7 @@ bool FAssetNamingWatcher::Tick(float /*DeltaTime*/)
 	}
 
 	// Never rename mid-load or mid-save; re-defer instead and pick it up next frame.
-	if (IsAsyncLoading() || IsGarbageCollecting() || GIsSavingPackage)
+	if (IsAsyncLoading() || IsGarbageCollecting() || UE::IsSavingPackage())
 	{
 		return true;
 	}

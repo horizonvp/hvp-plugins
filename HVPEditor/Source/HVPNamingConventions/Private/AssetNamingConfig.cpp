@@ -16,6 +16,8 @@ namespace
 	 */
 	const TCHAR* const BuiltInSuffixes[][2] = {
 		{ TEXT("_BP"),    TEXT("Blueprint class") },
+		{ TEXT("_BML"),   TEXT("Blueprint Macro Library") },
+		{ TEXT("_PDL"),   TEXT("Primitive Data Legend") },
 		{ TEXT("_ABP"),   TEXT("Animation Blueprint") },
 		{ TEXT("_WBP"),   TEXT("Widget Blueprint") },
 		{ TEXT("_A"),     TEXT("Animation Sequence") },

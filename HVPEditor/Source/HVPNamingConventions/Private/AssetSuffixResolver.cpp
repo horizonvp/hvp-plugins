@@ -12,8 +12,12 @@ namespace
 	/**
 	 * Suffix -> class path. Order here is presentational only; resolution is by depth.
 	 *
-	 * _AC, _BFL, _BI and _SMC are absent on purpose: they're all plain UBlueprint and are
+	 * _AC, _BFL, _BI, _BML and _SMC are absent on purpose: they're all plain UBlueprint and are
 	 * handled by ResolveBlueprintSuffix below.
+	 *
+	 * A new suffix needs TWO entries: one here (or in ResolveBlueprintSuffix) so the watcher knows
+	 * which type gets it, and one in AssetNamingConfig's BuiltInSuffixes so the name is recognised
+	 * as already carrying a suffix. Either alone does nothing visible.
 	 */
 	const TCHAR* const ClassRules[][2] = {
 		// Textures
@@ -70,6 +74,11 @@ namespace
 		{ TEXT("_LS"),    TEXT("/Script/LevelSequence.LevelSequence") },
 		{ TEXT("_IA"),    TEXT("/Script/EnhancedInput.InputAction") },
 		{ TEXT("_IMC"),   TEXT("/Script/EnhancedInput.InputMappingContext") },
+
+		// HVP plugins. Resolved by path like everything else, so a project without the plugin
+		// just skips the suffix. The class exists by the time Initialise runs because this plugin
+		// loads at PostEngineInit and HVPPrimitiveData at Default.
+		{ TEXT("_PDL"),   TEXT("/Script/HVPPrimitiveDataUncooked.PrimitiveDataLegend") },
 	};
 
 	int32 ComputeClassDepth(const UClass* Class)
@@ -175,6 +184,10 @@ FString FAssetSuffixResolver::ResolveBlueprintSuffix(const UObject* Asset)
 	if (Blueprint->BlueprintType == BPTYPE_FunctionLibrary)
 	{
 		return TEXT("_BFL");
+	}
+	if (Blueprint->BlueprintType == BPTYPE_MacroLibrary)
+	{
+		return TEXT("_BML");
 	}
 
 	if (const UClass* Parent = Blueprint->ParentClass)

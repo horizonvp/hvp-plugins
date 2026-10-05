@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.1",
+	"VersionName": "1.0",
 	"FriendlyName": "HVP Code Animation Web",
 	"Description": "State-driven code animation. A Code Animation Web lists a set of states (an enum) and a set of Animation Outputs (its own variables), says what each state does to each output, and how to travel between states. Set a state at any time and the outputs flow there - mid-transition changes included - while the owning Blueprint listens for output changes and applies them to the world however it likes.",
 	"Category": "HVP",

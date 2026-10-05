@@ -423,7 +423,7 @@ int32 UHVPRenameStatesCommandlet::Main(const FString& Params)
 		{
 			Objects.Add(Object);
 			return true;
-		}, /*bIncludeNestedObjects=*/true, RF_NoFlags, EInternalObjectFlags::Garbage);
+		}, EGetObjectsFlags::IncludeNestedObjects, RF_NoFlags, EInternalObjectFlags::Garbage);
 		for (UObject* Object : Objects)
 		{
 			if (Object->IsA<UClass>() || Object->IsA<UFunction>())

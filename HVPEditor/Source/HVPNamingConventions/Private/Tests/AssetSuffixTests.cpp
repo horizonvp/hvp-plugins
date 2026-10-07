@@ -19,7 +19,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSuffixBlueprintTypesTest, "HVP.Naming.Suf
 /**
  * The plain-UBlueprint suffixes are told apart by BlueprintType, and a new one needs entries in two
  * places to work at all: the resolver (which type gets it) and the config's suffix table (so a name
- * already carrying it is not suffixed again). This covers both halves for _BML and _PDL, and keeps
+ * already carrying it is not suffixed again). This covers both halves for _BML, _PDL and _IDL, and keeps
  * the neighbouring _BFL and _BP honest.
  */
 bool FAssetSuffixBlueprintTypesTest::RunTest(const FString& Parameters)
@@ -66,11 +66,21 @@ bool FAssetSuffixBlueprintTypesTest::RunTest(const FString& Parameters)
 	{
 		AddInfo(TEXT("HVPPrimitiveData is not enabled here; _PDL resolution skipped."));
 	}
+	if (UClass* LegendClass = FindObject<UClass>(nullptr, TEXT("/Script/HVPPrimitiveDataUncooked.InstanceDataLegend")))
+	{
+		const TStrongObjectPtr<UObject> Legend(NewObject<UObject>(GetTransientPackage(), LegendClass));
+		TestEqual(TEXT("Instance Data Legend -> _IDL"), Resolver.ResolveSuffix(Legend.Get()), FString(TEXT("_IDL")));
+	}
+	else
+	{
+		AddInfo(TEXT("HVPPrimitiveData is not enabled here, or predates the Instance Data Legend; _IDL resolution skipped."));
+	}
 
 	// The other half: names already carrying the suffix are recognised, so nothing appends a second.
 	const FAssetNamingConfig Config = FAssetNamingConfig::Load(TEXT("Tools/Conventions/conventions.json"));
 	TestEqual(TEXT("'Utility_BML' already has _BML"), Config.FindTrailingSuffix(TEXT("Utility_BML")), FString(TEXT("_BML")));
 	TestEqual(TEXT("'Rocks_PDL' already has _PDL"), Config.FindTrailingSuffix(TEXT("Rocks_PDL")), FString(TEXT("_PDL")));
+	TestEqual(TEXT("'Grass_IDL' already has _IDL"), Config.FindTrailingSuffix(TEXT("Grass_IDL")), FString(TEXT("_IDL")));
 	TestEqual(TEXT("'DeviceWeb_AW' already has _AW"), Config.FindTrailingSuffix(TEXT("DeviceWeb_AW")), FString(TEXT("_AW")));
 	TestEqual(TEXT("'Utility_BML_BP' ends in _BP"), Config.FindTrailingSuffix(TEXT("Utility_BML_BP")), FString(TEXT("_BP")));
 

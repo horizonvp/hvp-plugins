@@ -79,6 +79,7 @@ namespace
 		// just skips the suffix. The class exists by the time Initialise runs because this plugin
 		// loads at PostEngineInit and HVPPrimitiveData at Default.
 		{ TEXT("_PDL"),   TEXT("/Script/HVPPrimitiveDataUncooked.PrimitiveDataLegend") },
+		{ TEXT("_IDL"),   TEXT("/Script/HVPPrimitiveDataUncooked.InstanceDataLegend") },
 	};
 
 	int32 ComputeClassDepth(const UClass* Class)

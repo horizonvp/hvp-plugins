@@ -1,42 +1,36 @@
-#include "PrimitiveDataLegend.h"
+#include "InstanceDataLegend.h"
 
 #include "Misc/DataValidation.h"
 #include "NamedDataLegendLayout.h"
-#include "SceneTypes.h"
 
-#define LOCTEXT_NAMESPACE "PrimitiveDataLegend"
+#define LOCTEXT_NAMESPACE "InstanceDataLegend"
 
-FOnPrimitiveDataLegendChanged UPrimitiveDataLegend::OnChanged;
+FOnInstanceDataLegendChanged UInstanceDataLegend::OnChanged;
 
-int32 UPrimitiveDataLegend::GetCapacity()
-{
-	return FCustomPrimitiveData::NumCustomPrimitiveDataFloats;
-}
-
-const FPrimitiveDataLegendEntry* UPrimitiveDataLegend::FindParameter(const FGuid& Id) const
+const FInstanceDataLegendEntry* UInstanceDataLegend::FindParameter(const FGuid& Id) const
 {
 	if (!Id.IsValid())
 	{
 		return nullptr;
 	}
-	return Parameters.FindByPredicate([&Id](const FPrimitiveDataLegendEntry& E) { return E.Id == Id; });
+	return Parameters.FindByPredicate([&Id](const FInstanceDataLegendEntry& E) { return E.Id == Id; });
 }
 
-const FPrimitiveDataLegendEntry* UPrimitiveDataLegend::FindParameter(FName Name) const
+const FInstanceDataLegendEntry* UInstanceDataLegend::FindParameter(FName Name) const
 {
 	if (Name.IsNone())
 	{
 		return nullptr;
 	}
-	return Parameters.FindByPredicate([Name](const FPrimitiveDataLegendEntry& E) { return E.Name == Name; });
+	return Parameters.FindByPredicate([Name](const FInstanceDataLegendEntry& E) { return E.Name == Name; });
 }
 
-int32 UPrimitiveDataLegend::GetUsedFloats() const
+int32 UInstanceDataLegend::GetUsedFloats() const
 {
 	return NamedDataLegendLayout::UsedFloats(Parameters);
 }
 
-void UPrimitiveDataLegend::PostInitProperties()
+void UInstanceDataLegend::PostInitProperties()
 {
 	Super::PostInitProperties();
 	if (!HasAnyFlags(RF_ClassDefaultObject))
@@ -45,27 +39,36 @@ void UPrimitiveDataLegend::PostInitProperties()
 	}
 }
 
-void UPrimitiveDataLegend::PostLoad()
+void UInstanceDataLegend::PostLoad()
 {
 	Super::PostLoad();
 	Normalize();
 	TakeSnapshot();
 }
 
-bool UPrimitiveDataLegend::Normalize()
+bool UInstanceDataLegend::Normalize()
 {
 	bool bChanged = NamedDataLegendLayout::NormalizeIdentities(Parameters);
-	// Still INDEX_NONE afterwards means the legend is full; IsDataValid and the node both report it.
 	bChanged |= NamedDataLegendLayout::AllocateSlots(Parameters, GetCapacity());
+
+	// Transient and derived, so not a change in itself.
+	FloatsPerInstance = 0;
+	for (const FInstanceDataLegendEntry& Entry : Parameters)
+	{
+		if (Entry.HasSlot())
+		{
+			FloatsPerInstance = FMath::Max(FloatsPerInstance, Entry.Slot + Entry.GetWidth());
+		}
+	}
 	return bChanged;
 }
 
-uint32 UPrimitiveDataLegend::ComputeLayoutHash() const
+uint32 UInstanceDataLegend::ComputeLayoutHash() const
 {
 	return NamedDataLegendLayout::HashLayout(Parameters);
 }
 
-uint32 UPrimitiveDataLegend::ComputeBindingHash() const
+uint32 UInstanceDataLegend::ComputeBindingHash() const
 {
 	uint32 Hash = GetTypeHash(bRequireAllParameters);
 	for (const TSoftObjectPtr<UObject>& Bound : BoundMaterials)
@@ -75,7 +78,7 @@ uint32 UPrimitiveDataLegend::ComputeBindingHash() const
 	return Hash;
 }
 
-void UPrimitiveDataLegend::TakeSnapshot()
+void UInstanceDataLegend::TakeSnapshot()
 {
 	LastLayoutHash = ComputeLayoutHash();
 	LastBindingHash = ComputeBindingHash();
@@ -84,12 +87,10 @@ void UPrimitiveDataLegend::TakeSnapshot()
 
 #if WITH_EDITOR
 
-void UPrimitiveDataLegend::PostEditChangeProperty(FPropertyChangedEvent& Event)
+void UInstanceDataLegend::PostEditChangeProperty(FPropertyChangedEvent& Event)
 {
 	Super::PostEditChangeProperty(Event);
 
-	// Interactive edits (dragging a value) settle later with a ValueSet; nothing here is dragged, but
-	// there is no reason to re-sync materials mid-gesture if something ever is.
 	if (Event.ChangeType == EPropertyChangeType::Interactive)
 	{
 		return;
@@ -109,17 +110,17 @@ void UPrimitiveDataLegend::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	OnChanged.Broadcast(this, Renames, bLayoutChanged);
 }
 
-EDataValidationResult UPrimitiveDataLegend::IsDataValid(FDataValidationContext& Context) const
+EDataValidationResult UInstanceDataLegend::IsDataValid(FDataValidationContext& Context) const
 {
 	EDataValidationResult Result = Super::IsDataValid(Context);
 
 	TSet<FName> Names;
-	for (const FPrimitiveDataLegendEntry& Entry : Parameters)
+	for (const FInstanceDataLegendEntry& Entry : Parameters)
 	{
 		if (Names.Contains(Entry.Name))
 		{
 			Context.AddError(FText::Format(
-				LOCTEXT("DuplicateName", "'{0}' is named twice. Materials match parameters by name, so each must be unique."),
+				LOCTEXT("DuplicateName", "'{0}' is named twice. Materials match nodes by name, so each must be unique."),
 				FText::FromName(Entry.Name)));
 			Result = EDataValidationResult::Invalid;
 		}
@@ -128,7 +129,7 @@ EDataValidationResult UPrimitiveDataLegend::IsDataValid(FDataValidationContext& 
 		if (!Entry.HasSlot())
 		{
 			Context.AddError(FText::Format(
-				LOCTEXT("NoRoom", "'{0}' has no slot: a primitive has {1} floats of custom data and the other parameters use {2}. A vector needs four in a row."),
+				LOCTEXT("NoRoom", "'{0}' has no slot: a legend lays out at most {1} floats per instance and the other parameters use {2}. A vector needs three in a row."),
 				FText::FromName(Entry.Name), FText::AsNumber(GetCapacity()), FText::AsNumber(GetUsedFloats())));
 			Result = EDataValidationResult::Invalid;
 		}

@@ -14,7 +14,7 @@ public class HVPPrimitiveDataEditor : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core", "CoreUObject", "Engine",
-			// UPrimitiveDataLegend and the node, which the binding and the pin factory both work on.
+			// The legends and the nodes, which the bindings and the pin factory work on.
 			"HVPPrimitiveDataUncooked",
 		});
 
@@ -33,11 +33,11 @@ public class HVPPrimitiveDataEditor : ModuleRules
 			// UMaterialEditingLibrary: recompiling a material or updating a function after its
 			// parameters are rewritten.
 			"MaterialEditor",
-			// UPrimitiveDataSetLibrary, which the node tests check the gapped case compiles to.
+			// UPrimitiveDataSetLibrary and UInstanceDataSetLibrary, which the node tests check the nodes compile to.
 			"HVPPrimitiveDataRuntime",
 			// Clickable per-material results rather than lines in the output log.
 			"MessageLog",
-			// The parameter checkboxes in Set Named Primitive Data (Multiple)'s Details panel.
+			// The parameter checkboxes in the multiple nodes' Details panels.
 			"PropertyEditor",
 		});
 	}

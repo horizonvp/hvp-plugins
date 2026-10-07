@@ -1,7 +1,7 @@
 using UnrealBuildTool;
 
 /**
- * The legend asset and the Blueprint node. UncookedOnly, because a
+ * The legend assets (primitive and instance data) and the Blueprint nodes. UncookedOnly, because a
  * K2Node belongs in a module the editor and the cooker have but a packaged game does not, and the
  * blueprint compiler warns about any other placement.
  *
@@ -35,7 +35,7 @@ public class HVPPrimitiveDataUncooked : ModuleRules
 			"KismetCompiler",
 			// FSlateIcon for the node's palette icon.
 			"SlateCore",
-			// UPrimitiveDataSetLibrary, which Set Named Primitive Data (Multiple) compiles to.
+			// UPrimitiveDataSetLibrary and UInstanceDataSetLibrary, which the multiple nodes compile to.
 			"HVPPrimitiveDataRuntime",
 		});
 

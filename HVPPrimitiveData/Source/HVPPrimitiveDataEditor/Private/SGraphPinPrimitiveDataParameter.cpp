@@ -1,6 +1,8 @@
 #include "SGraphPinPrimitiveDataParameter.h"
 
 #include "EdGraph/EdGraphSchema.h"
+#include "InstanceDataLegend.h"
+#include "K2Node_SetNamedInstanceData.h"
 #include "K2Node_SetNamedPrimitiveData.h"
 #include "PrimitiveDataEntryLabel.h"
 #include "PrimitiveDataLegend.h"
@@ -9,35 +11,28 @@
 
 #define LOCTEXT_NAMESPACE "SGraphPinPrimitiveDataParameter"
 
-void SGraphPinPrimitiveDataParameter::Construct(const FArguments& InArgs, UEdGraphPin* InPin)
+void SGraphPinPrimitiveDataParameter::Construct(const FArguments& InArgs, UEdGraphPin* InPin, FNamedDataParameterSource InSource)
 {
+	Source = MoveTemp(InSource);
 	SGraphPin::Construct(SGraphPin::FArguments(), InPin);
-}
-
-UK2Node_SetNamedPrimitiveData* SGraphPinPrimitiveDataParameter::GetNode() const
-{
-	return GraphPinObj ? Cast<UK2Node_SetNamedPrimitiveData>(GraphPinObj->GetOwningNodeUnchecked()) : nullptr;
 }
 
 void SGraphPinPrimitiveDataParameter::RebuildOptions()
 {
 	Options.Reset();
-	const UK2Node_SetNamedPrimitiveData* Node = GetNode();
-	if (const UPrimitiveDataLegend* Legend = Node ? Node->GetLegend() : nullptr)
+	TArray<FName> Names;
+	if (Source.GetNames && Source.GetNames(Names))
 	{
-		for (const FPrimitiveDataLegendEntry& Entry : Legend->Parameters)
+		for (const FName Name : Names)
 		{
-			Options.Add(MakeShared<FName>(Entry.Name));
+			Options.Add(MakeShared<FName>(Name));
 		}
 	}
 }
 
 FText SGraphPinPrimitiveDataParameter::LabelFor(FName Name) const
 {
-	const UK2Node_SetNamedPrimitiveData* Node = GetNode();
-	const UPrimitiveDataLegend* Legend = Node ? Node->GetLegend() : nullptr;
-	const FPrimitiveDataLegendEntry* Entry = Legend ? Legend->FindParameter(Name) : nullptr;
-	return Entry ? PrimitiveDataEntryLabel(*Entry) : FText::FromName(Name);
+	return Source.Label ? Source.Label(Name) : FText::FromName(Name);
 }
 
 TSharedRef<SWidget> SGraphPinPrimitiveDataParameter::GetDefaultValueWidget()
@@ -69,8 +64,8 @@ TSharedRef<SWidget> SGraphPinPrimitiveDataParameter::GetDefaultValueWidget()
 				{
 					return FText::GetEmpty();
 				}
-				const UK2Node_SetNamedPrimitiveData* Node = GetNode();
-				if (!Node || !Node->GetLegend())
+				TArray<FName> Names;
+				if (!Source.GetNames || !Source.GetNames(Names))
 				{
 					return LOCTEXT("PickLegend", "Choose a legend first");
 				}
@@ -99,12 +94,53 @@ void SGraphPinPrimitiveDataParameter::OnSelected(TSharedPtr<FName> Item, ESelect
 	GraphPinObj->GetSchema()->TrySetDefaultValue(*GraphPinObj, NewValue);
 }
 
+namespace PrimitiveDataParameterPin
+{
+	/** A source reading whichever legend the node has chosen, through the node's own GetLegend. */
+	template <typename TNode>
+	FNamedDataParameterSource SourceFor(UEdGraphPin* Pin)
+	{
+		TWeakObjectPtr<TNode> WeakNode = Cast<TNode>(Pin->GetOwningNodeUnchecked());
+		FNamedDataParameterSource Source;
+		Source.GetNames = [WeakNode](TArray<FName>& OutNames)
+		{
+			const TNode* Node = WeakNode.Get();
+			const auto* Legend = Node ? Node->GetLegend() : nullptr;
+			if (!Legend)
+			{
+				return false;
+			}
+			for (const auto& Entry : Legend->Parameters)
+			{
+				OutNames.Add(Entry.Name);
+			}
+			return true;
+		};
+		Source.Label = [WeakNode](FName Name)
+		{
+			const TNode* Node = WeakNode.Get();
+			const auto* Legend = Node ? Node->GetLegend() : nullptr;
+			const auto* Entry = Legend ? Legend->FindParameter(Name) : nullptr;
+			return Entry ? PrimitiveDataEntryLabel(*Entry) : FText::FromName(Name);
+		};
+		return Source;
+	}
+}
+
 TSharedPtr<SGraphPin> FPrimitiveDataParameterPinFactory::CreatePin(UEdGraphPin* Pin) const
 {
-	if (Pin && Pin->PinName == UK2Node_SetNamedPrimitiveData::ParameterPinName
-		&& Cast<UK2Node_SetNamedPrimitiveData>(Pin->GetOwningNodeUnchecked()))
+	if (!Pin)
 	{
-		return SNew(SGraphPinPrimitiveDataParameter, Pin);
+		return nullptr;
+	}
+	UEdGraphNode* Node = Pin->GetOwningNodeUnchecked();
+	if (Pin->PinName == UK2Node_SetNamedPrimitiveData::ParameterPinName && Cast<UK2Node_SetNamedPrimitiveData>(Node))
+	{
+		return SNew(SGraphPinPrimitiveDataParameter, Pin, PrimitiveDataParameterPin::SourceFor<UK2Node_SetNamedPrimitiveData>(Pin));
+	}
+	if (Pin->PinName == UK2Node_SetNamedInstanceData::ParameterPinName && Cast<UK2Node_SetNamedInstanceData>(Node))
+	{
+		return SNew(SGraphPinPrimitiveDataParameter, Pin, PrimitiveDataParameterPin::SourceFor<UK2Node_SetNamedInstanceData>(Pin));
 	}
 	return nullptr;
 }

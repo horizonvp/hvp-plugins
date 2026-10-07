@@ -1,7 +1,3 @@
-// HVPPalette - written by Claude (Anthropic) in a pairing session with Gideon, who found the
-// __WorldContext route that makes the generated function resolve at construction-script time, and
-// caught the ParameterId, stale-node and NewFunction bugs that the first drafts shipped with.
-
 #pragma once
 
 #include "CoreMinimal.h"

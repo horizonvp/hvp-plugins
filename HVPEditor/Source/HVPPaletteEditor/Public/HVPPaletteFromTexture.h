@@ -1,5 +1,3 @@
-// HVPPalette - written by Claude (Anthropic) in a pairing session with Gideon.
-
 #pragma once
 
 #include "CoreMinimal.h"

@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0",
+	"VersionName": "1.1.0",
 	"FriendlyName": "HVP Primitive Data",
 	"Description": "Name your custom primitive data once, in a Primitive Data Legend asset, and your instanced meshes' per instance custom data in an Instance Data Legend. Bound materials have their slot numbers written for them - into parameters named like an entry, or PerInstanceCustomData nodes whose Description names one - and the Set Named Primitive Data and Set Named Instance Data nodes pick parameters by name, their value pins becoming scalars or colours to match. The nodes compile down to the engine's own calls with the slot baked in, so nearly nothing from this plugin exists in a packaged build - only the functions the multiple and batch nodes use to write several parameters, or many instances, in a single call.",
 	"Category": "HVP",

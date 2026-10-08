@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0.1",
+	"VersionName": "1.1.0",
 	"FriendlyName": "HVP Editor",
 	"Description": "Horizon VP's stateless editor tools: asset naming conventions, Blueprint graph selection, palette generation, and the plugin content reference check. Nothing here is serialised into an asset, so the plugin can be enabled or disabled per project at will, and none of it exists in a packaged build.",
 	"Category": "HVP",

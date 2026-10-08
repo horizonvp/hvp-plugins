@@ -5,6 +5,7 @@
 #include "InstanceDataLegend.h"
 #include "InstanceDataLegendBinding.h"
 #include "K2Node_SetNamedInstanceData.h"
+#include "K2Node_SetNamedInstanceDataBatch.h"
 #include "K2Node_SetNamedInstanceDataMulti.h"
 #include "K2Node_SetNamedPrimitiveData.h"
 #include "K2Node_SetNamedPrimitiveDataMulti.h"
@@ -17,6 +18,7 @@
 #include "PrimitiveDataLegend.h"
 #include "PrimitiveDataLegendBinding.h"
 #include "PropertyEditorModule.h"
+#include "SetNamedInstanceDataBatchDetails.h"
 #include "SetNamedInstanceDataMultiDetails.h"
 #include "SetNamedPrimitiveDataMultiDetails.h"
 #include "SGraphPinPrimitiveDataParameter.h"
@@ -66,6 +68,8 @@ public:
 			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedPrimitiveDataMultiDetails::MakeInstance));
 		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedInstanceDataMulti::StaticClass()->GetFName(),
 			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedInstanceDataMultiDetails::MakeInstance));
+		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedInstanceDataBatch::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedInstanceDataBatchDetails::MakeInstance));
 
 		LegendChangedHandle = UPrimitiveDataLegend::OnChanged.AddRaw(this,
 			&FHVPPrimitiveDataEditorModule::OnLegendChanged<UPrimitiveDataLegend>);
@@ -96,6 +100,7 @@ public:
 		{
 			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedPrimitiveDataMulti::StaticClass()->GetFName());
 			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedInstanceDataMulti::StaticClass()->GetFName());
+			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedInstanceDataBatch::StaticClass()->GetFName());
 		}
 
 		if (PinFactory.IsValid())
@@ -236,6 +241,17 @@ private:
 	static void RefreshNodes(UInstanceDataLegend* Legend)
 	{
 		RefreshNodes<UK2Node_SetNamedInstanceData, UK2Node_SetNamedInstanceDataMulti>(Legend);
+
+		// The batch node lists the legend's parameters in its Details panel too, and bakes its slots in.
+		TSet<UBlueprint*> Touched;
+		RefreshNodesOf<UK2Node_SetNamedInstanceDataBatch>(Legend, Touched, [](UK2Node_SetNamedInstanceDataBatch* Node)
+		{
+			Node->OnParametersOffered.Broadcast();
+		});
+		for (UBlueprint* Blueprint : Touched)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		}
 	}
 
 	template <typename TSingle, typename TMulti, typename TLegend>

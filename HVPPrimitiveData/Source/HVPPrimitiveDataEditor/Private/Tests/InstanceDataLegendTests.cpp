@@ -9,9 +9,11 @@
 #include "InstanceDataLegendBinding.h"
 #include "InstanceDataSetLibrary.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_MacroInstance.h"
 #include "K2Node_MakeArray.h"
 #include "K2Node_Self.h"
 #include "K2Node_SetNamedInstanceData.h"
+#include "K2Node_SetNamedInstanceDataBatch.h"
 #include "K2Node_SetNamedInstanceDataMulti.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
@@ -439,6 +441,385 @@ bool FSetNamedInstanceDataNodesTest::RunTest(const FString& Parameters)
 	const TArray<float> Short = Run(TEXT("RunMulti"), 3);
 	Expect(TEXT("Short"), Short, 1, 3, { 9.f, 0.25f, 0.5f });
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSetNamedInstanceDataBatchTest, "HVP.PrimitiveData.Instance.BatchCompilesAndRuns",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * The batch node end to end, on a mesh with four instances: uniform values over consecutive indices (the
+ * one-block ranged write), and over indices out of order with per instance arrays - floats and colours,
+ * one array shorter than the index list - and Target from an array.
+ */
+bool FSetNamedInstanceDataBatchTest::RunTest(const FString& Parameters)
+{
+	using namespace InstanceDataLegendTests;
+
+	const TStrongObjectPtr<UInstanceDataLegend> LegendOwner(NewObject<UInstanceDataLegend>(GetTransientPackage()));
+	UInstanceDataLegend* Legend = LegendOwner.Get();
+	Add(Legend, TEXT("Pad"), EType::Scalar);    // 0
+	Add(Legend, TEXT("Wind"), EType::Scalar);   // 1
+	Add(Legend, TEXT("Tint"), EType::Vector);   // 2-4
+	Add(Legend, TEXT("Burst"), EType::Scalar);  // 5 - never set
+	Add(Legend, TEXT("Glow"), EType::Scalar);   // 6
+	Legend->PostEditChange();
+	auto IdOf = [Legend](const TCHAR* Name) { return Legend->FindParameter(FName(Name))->Id; };
+
+	const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+	UPackage* Package = CreatePackage(TEXT("/Temp/HVPPrimitiveDataTest/BP_InstanceBatch"));
+	const TStrongObjectPtr<UBlueprint> BlueprintOwner(FKismetEditorUtilities::CreateBlueprint(
+		UInstancedStaticMeshComponent::StaticClass(), Package, TEXT("BP_InstanceBatch"), BPTYPE_Normal,
+		UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass()));
+	UBlueprint* Blueprint = BlueprintOwner.Get();
+	UEdGraph* Graph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	if (!TestNotNull(TEXT("Event graph"), Graph))
+	{
+		return false;
+	}
+
+	auto AddEvent = [Graph](const TCHAR* Name)
+	{
+		UK2Node_CustomEvent* Event = NewObject<UK2Node_CustomEvent>(Graph);
+		Event->CustomFunctionName = Name;
+		Graph->AddNode(Event, false, false);
+		Event->CreateNewGuid();
+		Event->AllocateDefaultPins();
+		return Event;
+	};
+	// A literal array into Pin: a Make Array typed by the connection, one element per value.
+	auto Literal = [Graph, Schema](UEdGraphPin* Pin, std::initializer_list<const TCHAR*> Values)
+	{
+		UK2Node_MakeArray* MakeArray = Place<UK2Node_MakeArray>(Graph);
+		bool bOk = Schema->TryCreateConnection(MakeArray->GetOutputPin(), Pin);
+		for (int32 Index = 1; Index < int32(Values.size()); ++Index)
+		{
+			MakeArray->AddInputPin();
+		}
+		int32 Index = 0;
+		for (const TCHAR* Value : Values)
+		{
+			Schema->TrySetDefaultValue(*MakeArray->FindPinChecked(MakeArray->GetPinName(Index++)), Value);
+		}
+		return bOk;
+	};
+	auto AddBatch = [Graph, Schema, Legend]()
+	{
+		UK2Node_SetNamedInstanceDataBatch* Node = Place<UK2Node_SetNamedInstanceDataBatch>(Graph);
+		Schema->TrySetDefaultObject(*Node->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::LegendPinName), Legend);
+		return Node;
+	};
+	auto Then = [](UEdGraphNode* Node) { return Node->FindPinChecked(UEdGraphSchema_K2::PN_Then); };
+
+	// Uniform over instances 1 and 2 (consecutive): Wind and Tint, Target unwired (self).
+	UK2Node_SetNamedInstanceDataBatch* Uniform = AddBatch();
+	Uniform->SetParameterSelected(IdOf(TEXT("Wind")), true);
+	Uniform->SetParameterSelected(IdOf(TEXT("Tint")), true);
+	Schema->TrySetDefaultValue(*Uniform->FindValuePin(IdOf(TEXT("Wind"))), TEXT("0.25"));
+	Schema->TrySetDefaultValue(*Uniform->FindValuePin(IdOf(TEXT("Tint"))), TEXT("(R=0.500000,G=0.600000,B=0.700000,A=1.000000)"));
+	bool bWired = Literal(Uniform->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::InstanceIndicesPinName), { TEXT("1"), TEXT("2") });
+	bWired &= Schema->TryCreateConnection(Then(AddEvent(TEXT("RunUniform"))), Uniform->GetExecPin());
+
+	// Instances 3 then 0: Wind uniform, Glow and Tint per instance - Tint's array covers only the first.
+	UK2Node_SetNamedInstanceDataBatch* PerInstance = AddBatch();
+	PerInstance->SetParameterSelected(IdOf(TEXT("Glow")), true);
+	PerInstance->SetParameterSelected(IdOf(TEXT("Wind")), true);
+	PerInstance->SetParameterSelected(IdOf(TEXT("Tint")), true);
+	PerInstance->SetParameterPerInstance(IdOf(TEXT("Glow")), true);
+	PerInstance->SetParameterPerInstance(IdOf(TEXT("Tint")), true);
+	{
+		const UEdGraphPin* GlowPin = PerInstance->FindValuePin(IdOf(TEXT("Glow")));
+		TestTrue(TEXT("Per instance pin is an array"), GlowPin && GlowPin->PinType.IsArray());
+		const UEdGraphPin* WindPin = PerInstance->FindValuePin(IdOf(TEXT("Wind")));
+		TestTrue(TEXT("Uniform pin is a single value"), WindPin && !WindPin->PinType.IsArray());
+	}
+	Schema->TrySetDefaultValue(*PerInstance->FindValuePin(IdOf(TEXT("Wind"))), TEXT("0.125"));
+	bWired &= Literal(PerInstance->FindValuePin(IdOf(TEXT("Glow"))), { TEXT("0.1"), TEXT("0.2") });
+	bWired &= Literal(PerInstance->FindValuePin(IdOf(TEXT("Tint"))), { TEXT("(R=0.300000,G=0.400000,B=0.500000,A=1.000000)") });
+	bWired &= Literal(PerInstance->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::InstanceIndicesPinName), { TEXT("3"), TEXT("0") });
+	{
+		UK2Node_MakeArray* Meshes = Place<UK2Node_MakeArray>(Graph);
+		bWired &= Schema->TryCreateConnection(Place<UK2Node_Self>(Graph)->FindPinChecked(UEdGraphSchema_K2::PN_Self), Meshes->FindPinChecked(TEXT("[0]")));
+		bWired &= Schema->TryCreateConnection(Meshes->GetOutputPin(), PerInstance->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::TargetPinName));
+	}
+	bWired &= Schema->TryCreateConnection(Then(AddEvent(TEXT("RunPerInstance"))), PerInstance->GetExecPin());
+	TestTrue(TEXT("Graph wired"), bWired);
+
+	FCompilerResultsLog Results;
+	FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+	for (const TSharedRef<FTokenizedMessage>& Message : Results.Messages)
+	{
+		if (Message->GetSeverity() == EMessageSeverity::Error)
+		{
+			AddError(FString::Printf(TEXT("Compile: %s"), *Message->ToText().ToString()));
+		}
+	}
+	if (!TestEqual(TEXT("Compiles without errors"), Results.NumErrors, 0) || !Blueprint->GeneratedClass)
+	{
+		return false;
+	}
+	TestTrue(TEXT("Compiles to the batch write"), Calls(Blueprint->GeneratedClass,
+		UInstanceDataSetLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UInstanceDataSetLibrary, SetInstanceCustomDataBatch))));
+
+	constexpr int32 Floats = 8;
+	auto Run = [this, Blueprint](const TCHAR* Event)
+	{
+		UInstancedStaticMeshComponent* Mesh = NewObject<UInstancedStaticMeshComponent>(GetTransientPackage(), Blueprint->GeneratedClass);
+		Mesh->SetNumCustomDataFloats(Floats);
+		TArray<float> Fill;
+		Fill.Init(9.f, Floats);
+		for (int32 Instance = 0; Instance < 4; ++Instance)
+		{
+			Mesh->AddInstance(FTransform::Identity);
+			Mesh->SetCustomData(Instance, TArrayView<const float>(Fill));
+		}
+		if (UFunction* Function = Mesh->FindFunction(Event))
+		{
+			Mesh->ProcessEvent(Function, nullptr);
+		}
+		else
+		{
+			AddError(FString::Printf(TEXT("No event %s"), Event));
+		}
+		return Mesh->PerInstanceSMCustomData;
+	};
+	auto Expect = [this](const TCHAR* What, const TArray<float>& Data, int32 Instance, std::initializer_list<float> Expected)
+	{
+		int32 Slot = 0;
+		for (const float Value : Expected)
+		{
+			const int32 Index = Instance * Floats + Slot;
+			if (TestTrue(FString::Printf(TEXT("%s: instance %d slot %d exists"), What, Instance, Slot), Data.IsValidIndex(Index)))
+			{
+				TestEqual(FString::Printf(TEXT("%s: instance %d slot %d"), What, Instance, Slot), Data[Index], Value, KINDA_SMALL_NUMBER);
+			}
+			++Slot;
+		}
+	};
+	const std::initializer_list<float> Untouched = { 9.f, 9.f, 9.f, 9.f, 9.f, 9.f, 9.f, 9.f };
+
+	const TArray<float> UniformData = Run(TEXT("RunUniform"));
+	Expect(TEXT("Uniform"), UniformData, 0, Untouched);
+	Expect(TEXT("Uniform"), UniformData, 1, { 9.f, 0.25f, 0.5f, 0.6f, 0.7f, 9.f, 9.f, 9.f });
+	Expect(TEXT("Uniform"), UniformData, 2, { 9.f, 0.25f, 0.5f, 0.6f, 0.7f, 9.f, 9.f, 9.f });
+	Expect(TEXT("Uniform"), UniformData, 3, Untouched);
+
+	const TArray<float> PerInstanceData = Run(TEXT("RunPerInstance"));
+	Expect(TEXT("Per instance"), PerInstanceData, 3, { 9.f, 0.125f, 0.3f, 0.4f, 0.5f, 9.f, 0.1f, 9.f });
+	Expect(TEXT("Per instance"), PerInstanceData, 0, { 9.f, 0.125f, 9.f, 9.f, 9.f, 9.f, 0.2f, 9.f });
+	Expect(TEXT("Per instance"), PerInstanceData, 1, Untouched);
+	Expect(TEXT("Per instance"), PerInstanceData, 2, Untouched);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSetNamedInstanceDataBatchTimingTest, "HVP.PrimitiveData.Instance.BatchTiming",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * What the batch node is for, measured: the same two parameters set on 10,000 instances by a Blueprint
+ * ForLoop around Set Named Instance Data (Multiple), and by one Set Named Instance Data (Batch) - uniform,
+ * and with one parameter per instance. Reports the times; checks only that all three agree, as timings
+ * depend on the machine.
+ */
+bool FSetNamedInstanceDataBatchTimingTest::RunTest(const FString& Parameters)
+{
+	using namespace InstanceDataLegendTests;
+
+	constexpr int32 NumInstances = 10000;
+	constexpr int32 Floats = 8;
+
+	const TStrongObjectPtr<UInstanceDataLegend> LegendOwner(NewObject<UInstanceDataLegend>(GetTransientPackage()));
+	UInstanceDataLegend* Legend = LegendOwner.Get();
+	Add(Legend, TEXT("Wind"), EType::Scalar);   // 0
+	Add(Legend, TEXT("Tint"), EType::Vector);   // 1-3, never set: kept by every write
+	Add(Legend, TEXT("Glow"), EType::Scalar);   // 4
+	Legend->PostEditChange();
+	const FGuid Wind = Legend->FindParameter(FName(TEXT("Wind")))->Id;
+	const FGuid Glow = Legend->FindParameter(FName(TEXT("Glow")))->Id;
+
+	UBlueprint* StandardMacros = LoadObject<UBlueprint>(nullptr, TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+	const TObjectPtr<UEdGraph>* ForLoopGraph = StandardMacros
+		? StandardMacros->MacroGraphs.FindByPredicate([](const UEdGraph* Graph) { return Graph->GetFName() == TEXT("ForLoop"); })
+		: nullptr;
+	if (!TestNotNull(TEXT("ForLoop macro"), ForLoopGraph))
+	{
+		return false;
+	}
+
+	const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+	UPackage* Package = CreatePackage(TEXT("/Temp/HVPPrimitiveDataTest/BP_InstanceBatchTiming"));
+	const TStrongObjectPtr<UBlueprint> BlueprintOwner(FKismetEditorUtilities::CreateBlueprint(
+		UInstancedStaticMeshComponent::StaticClass(), Package, TEXT("BP_InstanceBatchTiming"), BPTYPE_Normal,
+		UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass()));
+	UBlueprint* Blueprint = BlueprintOwner.Get();
+	UEdGraph* Graph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+
+	auto AddEvent = [Graph](const TCHAR* Name, std::initializer_list<TPair<const TCHAR*, FEdGraphPinType>> Inputs)
+	{
+		UK2Node_CustomEvent* Event = NewObject<UK2Node_CustomEvent>(Graph);
+		Event->CustomFunctionName = Name;
+		Graph->AddNode(Event, false, false);
+		Event->CreateNewGuid();
+		Event->AllocateDefaultPins();
+		for (const TPair<const TCHAR*, FEdGraphPinType>& Input : Inputs)
+		{
+			Event->CreateUserDefinedPin(Input.Key, Input.Value, EGPD_Output, false);
+		}
+		return Event;
+	};
+	auto ArrayOf = [](FName Category, FName SubCategory)
+	{
+		FEdGraphPinType Type;
+		Type.PinCategory = Category;
+		Type.PinSubCategory = SubCategory;
+		Type.ContainerType = EPinContainerType::Array;
+		return Type;
+	};
+	FEdGraphPinType IntType;
+	IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+	const FEdGraphPinType IntArray = ArrayOf(UEdGraphSchema_K2::PC_Int, NAME_None);
+	const FEdGraphPinType FloatArray = ArrayOf(UEdGraphSchema_K2::PC_Real, UEdGraphSchema_K2::PC_Float);
+	auto Then = [](UEdGraphNode* Node) { return Node->FindPinChecked(UEdGraphSchema_K2::PN_Then); };
+	bool bWired = true;
+
+	// 1. A Blueprint loop: ForLoop 0..Last, the multiple node on each index.
+	{
+		UK2Node_CustomEvent* Event = AddEvent(TEXT("RunLoop"), { { TEXT("Last"), IntType } });
+		UK2Node_MacroInstance* Loop = NewObject<UK2Node_MacroInstance>(Graph);
+		Loop->SetMacroGraph(*ForLoopGraph);
+		Graph->AddNode(Loop, false, false);
+		Loop->CreateNewGuid();
+		Loop->AllocateDefaultPins();
+
+		UK2Node_SetNamedInstanceDataMulti* Multi = Place<UK2Node_SetNamedInstanceDataMulti>(Graph);
+		Schema->TrySetDefaultObject(*Multi->FindPinChecked(UK2Node_SetNamedInstanceDataMulti::LegendPinName), Legend);
+		Multi->SetParameterSelected(Wind, true);
+		Multi->SetParameterSelected(Glow, true);
+		Schema->TrySetDefaultValue(*Multi->FindValuePin(Wind), TEXT("0.25"));
+		Schema->TrySetDefaultValue(*Multi->FindValuePin(Glow), TEXT("0.75"));
+
+		UEdGraphPin* LoopExec = nullptr;
+		for (UEdGraphPin* Pin : Loop->Pins)
+		{
+			if (Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				LoopExec = Pin;
+				break;
+			}
+		}
+		bWired &= LoopExec && Schema->TryCreateConnection(Then(Event), LoopExec);
+		Schema->TrySetDefaultValue(*Loop->FindPinChecked(TEXT("FirstIndex")), TEXT("0"));
+		bWired &= Schema->TryCreateConnection(Event->FindPinChecked(TEXT("Last")), Loop->FindPinChecked(TEXT("LastIndex")));
+		bWired &= Schema->TryCreateConnection(Loop->FindPinChecked(TEXT("LoopBody")), Multi->GetExecPin());
+		bWired &= Schema->TryCreateConnection(Loop->FindPinChecked(TEXT("Index")),
+			Multi->FindPinChecked(UK2Node_SetNamedInstanceDataMulti::InstanceIndexPinName));
+	}
+
+	// 2. One batch node, the same values for every instance.
+	{
+		UK2Node_CustomEvent* Event = AddEvent(TEXT("RunBatch"), { { TEXT("Indices"), IntArray } });
+		UK2Node_SetNamedInstanceDataBatch* Batch = Place<UK2Node_SetNamedInstanceDataBatch>(Graph);
+		Schema->TrySetDefaultObject(*Batch->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::LegendPinName), Legend);
+		Batch->SetParameterSelected(Wind, true);
+		Batch->SetParameterSelected(Glow, true);
+		Schema->TrySetDefaultValue(*Batch->FindValuePin(Wind), TEXT("0.25"));
+		Schema->TrySetDefaultValue(*Batch->FindValuePin(Glow), TEXT("0.75"));
+		bWired &= Schema->TryCreateConnection(Then(Event), Batch->GetExecPin());
+		bWired &= Schema->TryCreateConnection(Event->FindPinChecked(TEXT("Indices")),
+			Batch->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::InstanceIndicesPinName));
+	}
+
+	// 3. One batch node, Glow per instance.
+	{
+		UK2Node_CustomEvent* Event = AddEvent(TEXT("RunBatchPerInstance"), { { TEXT("Indices"), IntArray }, { TEXT("GlowValues"), FloatArray } });
+		UK2Node_SetNamedInstanceDataBatch* Batch = Place<UK2Node_SetNamedInstanceDataBatch>(Graph);
+		Schema->TrySetDefaultObject(*Batch->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::LegendPinName), Legend);
+		Batch->SetParameterSelected(Wind, true);
+		Batch->SetParameterSelected(Glow, true);
+		Batch->SetParameterPerInstance(Glow, true);
+		Schema->TrySetDefaultValue(*Batch->FindValuePin(Wind), TEXT("0.25"));
+		bWired &= Schema->TryCreateConnection(Then(Event), Batch->GetExecPin());
+		bWired &= Schema->TryCreateConnection(Event->FindPinChecked(TEXT("Indices")),
+			Batch->FindPinChecked(UK2Node_SetNamedInstanceDataBatch::InstanceIndicesPinName));
+		bWired &= Schema->TryCreateConnection(Event->FindPinChecked(TEXT("GlowValues")), Batch->FindValuePin(Glow));
+	}
+	TestTrue(TEXT("Graph wired"), bWired);
+
+	FCompilerResultsLog Results;
+	FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+	for (const TSharedRef<FTokenizedMessage>& Message : Results.Messages)
+	{
+		if (Message->GetSeverity() == EMessageSeverity::Error)
+		{
+			AddError(FString::Printf(TEXT("Compile: %s"), *Message->ToText().ToString()));
+		}
+	}
+	if (!TestEqual(TEXT("Compiles without errors"), Results.NumErrors, 0) || !Blueprint->GeneratedClass)
+	{
+		return false;
+	}
+
+	const TStrongObjectPtr<UInstancedStaticMeshComponent> Mesh(
+		NewObject<UInstancedStaticMeshComponent>(GetTransientPackage(), Blueprint->GeneratedClass));
+	Mesh->SetNumCustomDataFloats(Floats);
+	TArray<FTransform> Transforms;
+	Transforms.Init(FTransform::Identity, NumInstances);
+	Mesh->AddInstances(Transforms, /*bShouldReturnIndices*/ false);
+
+	TArray<int32> Indices;
+	TArray<float> GlowValues;
+	for (int32 Index = 0; Index < NumInstances; ++Index)
+	{
+		Indices.Add(Index);
+		GlowValues.Add(0.75f);
+	}
+
+	// Best of five, after a reset to 9s each time; returns milliseconds.
+	auto Time = [&Mesh](const TCHAR* Event, void* Params)
+	{
+		UFunction* Function = Mesh->FindFunction(Event);
+		double Best = TNumericLimits<double>::Max();
+		for (int32 Pass = 0; Pass < 5 && Function; ++Pass)
+		{
+			for (float& Value : Mesh->PerInstanceSMCustomData)
+			{
+				Value = 9.f;
+			}
+			const double Start = FPlatformTime::Seconds();
+			Mesh->ProcessEvent(Function, Params);
+			Best = FMath::Min(Best, (FPlatformTime::Seconds() - Start) * 1000.0);
+		}
+		return Function ? Best : -1.0;
+	};
+	auto Check = [this, &Mesh](const TCHAR* What)
+	{
+		bool bAll = Mesh->PerInstanceSMCustomData.Num() == NumInstances * Floats;
+		for (int32 Instance = 0; Instance < NumInstances && bAll; ++Instance)
+		{
+			const float* Row = &Mesh->PerInstanceSMCustomData[Instance * Floats];
+			bAll = Row[0] == 0.25f && Row[1] == 9.f && Row[3] == 9.f && Row[4] == 0.75f && Row[5] == 9.f;
+		}
+		TestTrue(FString::Printf(TEXT("%s: every instance set, and only the ticked floats"), What), bAll);
+	};
+
+	int32 Last = NumInstances - 1;
+	const double LoopMs = Time(TEXT("RunLoop"), &Last);
+	Check(TEXT("Blueprint loop"));
+
+	const double BatchMs = Time(TEXT("RunBatch"), &Indices);
+	Check(TEXT("Batch"));
+
+	struct
+	{
+		TArray<int32> Indices;
+		TArray<float> GlowValues;
+	} PerInstanceParams{ Indices, GlowValues };
+	const double PerInstanceMs = Time(TEXT("RunBatchPerInstance"), &PerInstanceParams);
+	Check(TEXT("Batch per instance"));
+
+	AddInfo(FString::Printf(TEXT("%d instances, 2 parameters. Blueprint ForLoop + Multiple: %.3f ms. Batch: %.3f ms (%.0fx). Batch, one per instance: %.3f ms (%.0fx)."),
+		NumInstances, LoopMs, BatchMs, LoopMs / FMath::Max(BatchMs, 1e-6), PerInstanceMs, LoopMs / FMath::Max(PerInstanceMs, 1e-6)));
 	return true;
 }
 

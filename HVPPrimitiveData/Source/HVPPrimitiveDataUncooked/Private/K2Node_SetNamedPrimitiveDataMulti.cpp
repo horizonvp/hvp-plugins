@@ -5,12 +5,10 @@
 #include "Components/PrimitiveComponent.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_CallFunction.h"
-#include "K2Node_MakeArray.h"
-#include "K2Node_Self.h"
-#include "Kismet/KismetMathLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "KismetCompiler.h"
+#include "NamedDataNodeExpansion.h"
 #include "PrimitiveDataSetLibrary.h"
 #include "Styling/AppStyle.h"
 
@@ -508,15 +506,11 @@ void UK2Node_SetNamedPrimitiveDataMulti::ExpandNode(FKismetCompilerContext& Comp
 
 	// Unwired Target means self: fine in a primitive component's own Blueprint, an error anywhere else.
 	UEdGraphPin* Target = FindPinChecked(TargetPinName);
-	if (Target->LinkedTo.Num() == 0)
+	if (!NamedDataNodeExpansion::CheckSelfTarget(CompilerContext, this, Target, UPrimitiveComponent::StaticClass(),
+		LOCTEXT("NoTarget", "@@ needs a mesh connected to Target.")))
 	{
-		const UClass* Context = CompilerContext.Blueprint ? CompilerContext.Blueprint->ParentClass : nullptr;
-		if (!Context || !Context->IsChildOf(UPrimitiveComponent::StaticClass()))
-		{
-			CompilerContext.MessageLog.Error(*LOCTEXT("NoTarget", "@@ needs a mesh connected to Target.").ToString(), this);
-			BreakAllNodeLinks();
-			return;
-		}
+		BreakAllNodeLinks();
+		return;
 	}
 
 	// Side by side, every float in the range is ours: the engine call does it alone. Otherwise the
@@ -565,78 +559,22 @@ void UK2Node_SetNamedPrimitiveDataMulti::ExpandNode(FKismetCompilerContext& Comp
 		Schema->TrySetDefaultValue(*Set->FindPinChecked(TEXT("Mask")), FString::Printf(TEXT("%lld"), static_cast<int64>(Mask)));
 
 		// A static function takes its meshes as an array: pass an array straight through, gather
-		// separate wires (or self, unwired) into one. The loop happens in C++ rather than in script.
-		UEdGraphPin* TargetsInput = Set->FindPinChecked(TEXT("Targets"));
-		if (Target->LinkedTo.Num() == 1 && Target->LinkedTo[0]->PinType.IsArray())
+		// separate wires (or self, unwired) into one.
+		if (!NamedDataNodeExpansion::GatherTargets(CompilerContext, this, SourceGraph, Target, Set->FindPinChecked(TEXT("Targets")), bWired))
 		{
-			CompilerContext.MovePinLinksToIntermediate(*Target, *TargetsInput);
-		}
-		else
-		{
-			TArray<UEdGraphPin*> Sources = Target->LinkedTo;
-			if (Sources.ContainsByPredicate([](const UEdGraphPin* Source) { return Source->PinType.IsArray(); }))
-			{
-				CompilerContext.MessageLog.Error(*LOCTEXT("MixedTargets",
-					"@@: Target takes one array, or any number of single meshes, but not both.").ToString(), this);
-				BreakAllNodeLinks();
-				return;
-			}
-			if (Sources.Num() == 0)
-			{
-				UK2Node_Self* Self = CompilerContext.SpawnIntermediateNode<UK2Node_Self>(this, SourceGraph);
-				Self->AllocateDefaultPins();
-				Sources.Add(Self->FindPinChecked(UEdGraphSchema_K2::PN_Self));
-			}
-			Target->BreakAllPinLinks();
-
-			UK2Node_MakeArray* Meshes = CompilerContext.SpawnIntermediateNode<UK2Node_MakeArray>(this, SourceGraph);
-			Meshes->AllocateDefaultPins();
-			bWired &= Schema->TryCreateConnection(Meshes->GetOutputPin(), TargetsInput);
-			Meshes->PinConnectionListChanged(Meshes->GetOutputPin());
-			for (int32 Index = 0; Index < Sources.Num(); ++Index)
-			{
-				if (Index > 0)
-				{
-					Meshes->AddInputPin();
-				}
-				bWired &= Schema->TryCreateConnection(Sources[Index], Meshes->FindPinChecked(Meshes->GetPinName(Index)));
-			}
+			BreakAllNodeLinks();
+			return;
 		}
 	}
 
 	// Every float in the range, in order. Gaps between parameters are left at zero: the masked function
 	// never writes them.
-	UK2Node_MakeArray* Values = CompilerContext.SpawnIntermediateNode<UK2Node_MakeArray>(this, SourceGraph);
-	Values->AllocateDefaultPins();
-	bWired &= Schema->TryCreateConnection(Values->GetOutputPin(), ValuesInput);
-	Values->PinConnectionListChanged(Values->GetOutputPin());
-	for (int32 Index = 1; Index < Count; ++Index)
-	{
-		Values->AddInputPin();
-	}
-	auto Element = [Values](int32 Index) { return Values->FindPinChecked(Values->GetPinName(Index)); };
-
+	TArray<NamedDataNodeExpansion::FValueWrite> Values;
 	for (const FWrite& Write : Writes)
 	{
-		const int32 Offset = Write.Entry->Slot - First;
-		if (Write.Entry->GetWidth() == 1)
-		{
-			// Moves the default too, when nothing is connected.
-			bWired &= CompilerContext.MovePinLinksToIntermediate(*Write.Pin, *Element(Offset)).CanSafeConnect();
-			continue;
-		}
-
-		// FLinearColor -> four floats, with an engine function so the cooked graph needs nothing else.
-		UK2Node_CallFunction* Break = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
-		Break->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BreakColor), UKismetMathLibrary::StaticClass());
-		Break->AllocateDefaultPins();
-		bWired &= CompilerContext.MovePinLinksToIntermediate(*Write.Pin, *Break->FindPinChecked(TEXT("InColor"))).CanSafeConnect();
-		const TCHAR* Channels[] = { TEXT("R"), TEXT("G"), TEXT("B"), TEXT("A") };
-		for (int32 Channel = 0; Channel < 4; ++Channel)
-		{
-			bWired &= Schema->TryCreateConnection(Break->FindPinChecked(Channels[Channel]), Element(Offset + Channel));
-		}
+		Values.Add({ Write.Pin, Write.Entry->Slot - First, Write.Entry->GetWidth() });
 	}
+	bWired &= NamedDataNodeExpansion::WireValues(CompilerContext, this, SourceGraph, ValuesInput, Count, Values);
 
 	if (!bWired)
 	{

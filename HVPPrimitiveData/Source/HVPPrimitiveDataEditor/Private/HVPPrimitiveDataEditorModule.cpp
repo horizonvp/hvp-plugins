@@ -2,6 +2,11 @@
 #include "ContentBrowserMenuContexts.h"
 #include "Containers/Ticker.h"
 #include "EdGraphUtilities.h"
+#include "InstanceDataLegend.h"
+#include "InstanceDataLegendBinding.h"
+#include "K2Node_SetNamedInstanceData.h"
+#include "K2Node_SetNamedInstanceDataBatch.h"
+#include "K2Node_SetNamedInstanceDataMulti.h"
 #include "K2Node_SetNamedPrimitiveData.h"
 #include "K2Node_SetNamedPrimitiveDataMulti.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -13,6 +18,8 @@
 #include "PrimitiveDataLegend.h"
 #include "PrimitiveDataLegendBinding.h"
 #include "PropertyEditorModule.h"
+#include "SetNamedInstanceDataBatchDetails.h"
+#include "SetNamedInstanceDataMultiDetails.h"
 #include "SetNamedPrimitiveDataMultiDetails.h"
 #include "SGraphPinPrimitiveDataParameter.h"
 #include "ScopedTransaction.h"
@@ -22,8 +29,17 @@
 
 #define LOCTEXT_NAMESPACE "HVPPrimitiveDataEditor"
 
+namespace HVPPrimitiveDataEditor
+{
+	/** The binding that goes with each legend class, so the wiring below is written once for both. */
+	template <typename TLegend> struct TBindingFor;
+	template <> struct TBindingFor<UPrimitiveDataLegend> { using Type = FPrimitiveDataLegendBinding; };
+	template <> struct TBindingFor<UInstanceDataLegend> { using Type = FInstanceDataLegendBinding; };
+}
+
 /**
- * Wiring. Three jobs, all reactions to something the user did elsewhere:
+ * Wiring, for both kinds of legend - Primitive Data and Instance Data. Three jobs, all reactions to
+ * something the user did elsewhere:
  *
  *   - a legend was edited: re-lay out its bound materials, refresh the nodes that use it;
  *   - a bound material was saved: check it still matches its legend, and say so if not;
@@ -42,7 +58,7 @@ public:
 		FMessageLogInitializationOptions Options;
 		Options.bShowFilters = true;
 		Options.bAllowClear = true;
-		MessageLog.RegisterLogListing(FPrimitiveDataLegendBinding::LogName, LOCTEXT("LogLabel", "Primitive Data Legend"), Options);
+		MessageLog.RegisterLogListing(FPrimitiveDataLegendBinding::LogName, LOCTEXT("LogLabel", "Primitive and Instance Data Legends"), Options);
 
 		PinFactory = MakeShared<FPrimitiveDataParameterPinFactory>();
 		FEdGraphUtilities::RegisterVisualPinFactory(PinFactory);
@@ -50,8 +66,15 @@ public:
 		FPropertyEditorModule& PropertyEditor = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedPrimitiveDataMulti::StaticClass()->GetFName(),
 			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedPrimitiveDataMultiDetails::MakeInstance));
+		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedInstanceDataMulti::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedInstanceDataMultiDetails::MakeInstance));
+		PropertyEditor.RegisterCustomClassLayout(UK2Node_SetNamedInstanceDataBatch::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSetNamedInstanceDataBatchDetails::MakeInstance));
 
-		LegendChangedHandle = UPrimitiveDataLegend::OnChanged.AddRaw(this, &FHVPPrimitiveDataEditorModule::OnLegendChanged);
+		LegendChangedHandle = UPrimitiveDataLegend::OnChanged.AddRaw(this,
+			&FHVPPrimitiveDataEditorModule::OnLegendChanged<UPrimitiveDataLegend>);
+		InstanceLegendChangedHandle = UInstanceDataLegend::OnChanged.AddRaw(this,
+			&FHVPPrimitiveDataEditorModule::OnLegendChanged<UInstanceDataLegend>);
 		PreSaveHandle = FCoreUObjectDelegates::OnObjectPreSave.AddRaw(this, &FHVPPrimitiveDataEditorModule::OnObjectPreSave);
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(
@@ -64,6 +87,7 @@ public:
 		UToolMenus::UnregisterOwner(this);
 
 		UPrimitiveDataLegend::OnChanged.Remove(LegendChangedHandle);
+		UInstanceDataLegend::OnChanged.Remove(InstanceLegendChangedHandle);
 		FCoreUObjectDelegates::OnObjectPreSave.Remove(PreSaveHandle);
 
 		if (TickerHandle.IsValid())
@@ -75,6 +99,8 @@ public:
 		if (FPropertyEditorModule* PropertyEditor = FModuleManager::GetModulePtr<FPropertyEditorModule>("PropertyEditor"))
 		{
 			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedPrimitiveDataMulti::StaticClass()->GetFName());
+			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedInstanceDataMulti::StaticClass()->GetFName());
+			PropertyEditor->UnregisterCustomClassLayout(UK2Node_SetNamedInstanceDataBatch::StaticClass()->GetFName());
 		}
 
 		if (PinFactory.IsValid())
@@ -109,14 +135,19 @@ private:
 		}
 	}
 
-	void OnLegendChanged(UPrimitiveDataLegend* Legend, const TMap<FName, FName>& Renames, bool bLayoutChanged)
+	/** The pending edits for each legend class. */
+	TMap<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend>& PendingFor(UPrimitiveDataLegend*) { return PendingLegends; }
+	TMap<TWeakObjectPtr<UInstanceDataLegend>, FPendingLegend>& PendingFor(UInstanceDataLegend*) { return PendingInstanceLegends; }
+
+	template <typename TLegend>
+	void OnLegendChanged(TLegend* Legend, const TMap<FName, FName>& Renames, bool bLayoutChanged)
 	{
 		if (!Legend)
 		{
 			return;
 		}
 
-		FPendingLegend& Pending = PendingLegends.FindOrAdd(Legend);
+		FPendingLegend& Pending = PendingFor(Legend).FindOrAdd(Legend);
 		Pending.bLayoutChanged |= bLayoutChanged;
 
 		// Two renames of one entry inside a tick (A -> B, then B -> C) have to reach the material as
@@ -165,26 +196,34 @@ private:
 	{
 		TickerHandle.Reset();
 
-		TMap<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend> Legends = MoveTemp(PendingLegends);
-		PendingLegends.Reset();
 		TSet<FSoftObjectPath> Saved = MoveTemp(PendingSaveChecks);
 		PendingSaveChecks.Reset();
 
-		for (const TPair<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend>& Pair : Legends)
+		RunPending<UPrimitiveDataLegend>();
+		RunPending<UInstanceDataLegend>();
+
+		CheckSaved(Saved);
+
+		return false;	// one-shot; Schedule() adds a fresh ticker for the next batch
+	}
+
+	template <typename TLegend>
+	void RunPending()
+	{
+		TMap<TWeakObjectPtr<TLegend>, FPendingLegend> Legends = MoveTemp(PendingFor(static_cast<TLegend*>(nullptr)));
+		PendingFor(static_cast<TLegend*>(nullptr)).Reset();
+
+		for (const TPair<TWeakObjectPtr<TLegend>, FPendingLegend>& Pair : Legends)
 		{
-			if (UPrimitiveDataLegend* Legend = Pair.Key.Get())
+			if (TLegend* Legend = Pair.Key.Get())
 			{
-				FPrimitiveDataLegendBinding::SyncAll(*Legend, /*bApply*/ true, Pair.Value.Renames);
+				HVPPrimitiveDataEditor::TBindingFor<TLegend>::Type::SyncAll(*Legend, /*bApply*/ true, Pair.Value.Renames);
 				if (Pair.Value.bLayoutChanged)
 				{
 					RefreshNodes(Legend);
 				}
 			}
 		}
-
-		CheckSaved(Saved);
-
-		return false;	// one-shot; Schedule() adds a fresh ticker for the next batch
 	}
 
 	/**
@@ -196,9 +235,31 @@ private:
 	 */
 	static void RefreshNodes(UPrimitiveDataLegend* Legend)
 	{
+		RefreshNodes<UK2Node_SetNamedPrimitiveData, UK2Node_SetNamedPrimitiveDataMulti>(Legend);
+	}
+
+	static void RefreshNodes(UInstanceDataLegend* Legend)
+	{
+		RefreshNodes<UK2Node_SetNamedInstanceData, UK2Node_SetNamedInstanceDataMulti>(Legend);
+
+		// The batch node lists the legend's parameters in its Details panel too, and bakes its slots in.
 		TSet<UBlueprint*> Touched;
-		RefreshNodesOf<UK2Node_SetNamedPrimitiveData>(Legend, Touched);
-		RefreshNodesOf<UK2Node_SetNamedPrimitiveDataMulti>(Legend, Touched, [](UK2Node_SetNamedPrimitiveDataMulti* Node)
+		RefreshNodesOf<UK2Node_SetNamedInstanceDataBatch>(Legend, Touched, [](UK2Node_SetNamedInstanceDataBatch* Node)
+		{
+			Node->OnParametersOffered.Broadcast();
+		});
+		for (UBlueprint* Blueprint : Touched)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		}
+	}
+
+	template <typename TSingle, typename TMulti, typename TLegend>
+	static void RefreshNodes(TLegend* Legend)
+	{
+		TSet<UBlueprint*> Touched;
+		RefreshNodesOf<TSingle>(Legend, Touched);
+		RefreshNodesOf<TMulti>(Legend, Touched, [](TMulti* Node)
 		{
 			// Its Details panel lists the legend's parameters; an edit may have added, removed or renamed some.
 			Node->OnParametersOffered.Broadcast();
@@ -209,8 +270,8 @@ private:
 		}
 	}
 
-	template <typename TNode>
-	static void RefreshNodesOf(UPrimitiveDataLegend* Legend, TSet<UBlueprint*>& Touched, TFunction<void(TNode*)> After = nullptr)
+	template <typename TNode, typename TLegend>
+	static void RefreshNodesOf(TLegend* Legend, TSet<UBlueprint*>& Touched, TFunction<void(TNode*)> After = nullptr)
 	{
 		for (TObjectIterator<TNode> It; It; ++It)
 		{
@@ -254,21 +315,31 @@ private:
 			{
 				continue;
 			}
-			for (UPrimitiveDataLegend* Legend : FPrimitiveDataLegendBinding::FindLegendsBinding(Material))
-			{
-				const FPrimitiveDataBindingResult Result = FPrimitiveDataLegendBinding::Sync(*Legend, Material, /*bApply*/ false);
-				if (!Result.IsClean())
-				{
-					FPrimitiveDataLegendBinding::ReportTo(Log, *Legend, Material, Result);
-					bProblems = true;
-				}
-			}
+			bProblems |= CheckSavedAgainst<UPrimitiveDataLegend>(Log, Material);
+			bProblems |= CheckSavedAgainst<UInstanceDataLegend>(Log, Material);
 		}
 		if (bProblems)
 		{
-			Log.Notify(LOCTEXT("SavedDrift", "A saved material no longer matches its Primitive Data Legend"),
+			Log.Notify(LOCTEXT("SavedDrift", "A saved material no longer matches its legend"),
 				EMessageSeverity::Warning, /*bForce*/ true);
 		}
+	}
+
+	template <typename TLegend>
+	static bool CheckSavedAgainst(FMessageLog& Log, UObject* Material)
+	{
+		using FBinding = typename HVPPrimitiveDataEditor::TBindingFor<TLegend>::Type;
+		bool bProblems = false;
+		for (TLegend* Legend : FBinding::FindLegendsBinding(Material))
+		{
+			const FPrimitiveDataBindingResult Result = FBinding::Sync(*Legend, Material, /*bApply*/ false);
+			if (!Result.IsClean())
+			{
+				FBinding::ReportTo(Log, *Legend, Material, Result);
+				bProblems = true;
+			}
+		}
+		return bProblems;
 	}
 
 	// -----------------------------------------------------------------------
@@ -279,15 +350,17 @@ private:
 	{
 		FToolMenuOwnerScoped OwnerScoped(this);
 
-		RegisterLegendMenu();
+		RegisterLegendMenu<UPrimitiveDataLegend>(TEXT("HVPPrimitiveData"));
+		RegisterLegendMenu<UInstanceDataLegend>(TEXT("HVPInstanceData"));
 		RegisterBindMenu(UMaterial::StaticClass());
 		// Material layers and blends derive from UMaterialFunction; their menus inherit this one.
 		RegisterBindMenu(UMaterialFunction::StaticClass());
 	}
 
-	static void RegisterLegendMenu()
+	template <typename TLegend>
+	static void RegisterLegendMenu(const TCHAR* Prefix)
 	{
-		UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(UPrimitiveDataLegend::StaticClass());
+		UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(TLegend::StaticClass());
 		if (!Menu)
 		{
 			return;
@@ -295,23 +368,23 @@ private:
 
 		FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("GetAssetActions"));
 		Section.AddMenuEntry(
-			TEXT("HVPPrimitiveDataSync"),
+			FName(*FString::Printf(TEXT("%sSync"), Prefix)),
 			LOCTEXT("SyncLabel", "Sync Bound Materials"),
 			LOCTEXT("SyncTooltip",
-				"Lay out every bound material by this legend: parameters named like an entry are switched to "
-				"custom primitive data and given its slot. Happens automatically when the legend is edited; "
-				"this is for when a material changed instead."),
+				"Lay out every bound material by this legend: the parameters or nodes named like an entry are given "
+				"its slot. Happens automatically when the legend is edited; this is for when a material changed instead."),
 			FSlateIcon(),
-			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends, true)));
+			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends<TLegend>, true)));
 
 		Section.AddMenuEntry(
-			TEXT("HVPPrimitiveDataCheck"),
+			FName(*FString::Printf(TEXT("%sCheck"), Prefix)),
 			LOCTEXT("CheckLabel", "Check Bound Materials"),
 			LOCTEXT("CheckTooltip", "Report how every bound material differs from this legend, without changing anything."),
 			FSlateIcon(),
-			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends, false)));
+			FToolUIActionChoice(FToolMenuExecuteAction::CreateStatic(&RunOnSelectedLegends<TLegend>, false)));
 	}
 
+	template <typename TLegend>
 	static void RunOnSelectedLegends(const FToolMenuContext& Context, bool bApply)
 	{
 		const UContentBrowserAssetContextMenuContext* Browser = Context.FindContext<UContentBrowserAssetContextMenuContext>();
@@ -319,9 +392,9 @@ private:
 		{
 			return;
 		}
-		for (UPrimitiveDataLegend* Legend : Browser->LoadSelectedObjects<UPrimitiveDataLegend>())
+		for (TLegend* Legend : Browser->LoadSelectedObjects<TLegend>())
 		{
-			FPrimitiveDataLegendBinding::SyncAll(*Legend, bApply);
+			HVPPrimitiveDataEditor::TBindingFor<TLegend>::Type::SyncAll(*Legend, bApply);
 		}
 	}
 
@@ -340,7 +413,16 @@ private:
 			LOCTEXT("BindTooltip",
 				"Let a legend lay this material's custom primitive data out for it. A material belongs to one "
 				"legend at a time; choosing the ticked one unbinds it."),
-			FNewToolMenuDelegate::CreateStatic(&FillBindMenu));
+			FNewToolMenuDelegate::CreateStatic(&FillBindMenu<UPrimitiveDataLegend>));
+
+		Section.AddSubMenu(
+			TEXT("HVPInstanceDataBind"),
+			LOCTEXT("BindInstanceLabel", "Bind to Instance Data Legend"),
+			LOCTEXT("BindInstanceTooltip",
+				"Let a legend lay out this material's per instance custom data: its PerInstanceCustomData nodes, "
+				"named by their Description. A material belongs to one instance data legend at a time; choosing the "
+				"ticked one unbinds it."),
+			FNewToolMenuDelegate::CreateStatic(&FillBindMenu<UInstanceDataLegend>));
 	}
 
 	/**
@@ -348,8 +430,12 @@ private:
 	 * loaded to read their binding lists - small assets. The selected materials are not loaded until
 	 * one is actually bound.
 	 */
+	template <typename TLegend>
 	static void FillBindMenu(UToolMenu* SubMenu)
 	{
+		using FBinding = typename HVPPrimitiveDataEditor::TBindingFor<TLegend>::Type;
+		constexpr bool bInstance = std::is_same_v<TLegend, UInstanceDataLegend>;
+
 		const UContentBrowserAssetContextMenuContext* Browser = SubMenu->FindContext<UContentBrowserAssetContextMenuContext>();
 		if (!Browser)
 		{
@@ -366,16 +452,20 @@ private:
 		}
 
 		TArray<FAssetData> Legends;
-		FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataLegend::StaticClass()->GetClassPathName(), Legends);
+		FAssetRegistryModule::GetRegistry().GetAssetsByClass(TLegend::StaticClass()->GetClassPathName(), Legends);
 		Legends.Sort([](const FAssetData& A, const FAssetData& B) { return A.AssetName.LexicalLess(B.AssetName); });
 
-		FToolMenuSection& Section = SubMenu->AddSection(TEXT("Legends"), LOCTEXT("LegendsHeading", "Primitive Data Legends"));
+		FToolMenuSection& Section = SubMenu->AddSection(TEXT("Legends"), bInstance
+			? LOCTEXT("InstanceLegendsHeading", "Instance Data Legends")
+			: LOCTEXT("LegendsHeading", "Primitive Data Legends"));
 
 		if (Legends.Num() == 0)
 		{
 			Section.AddMenuEntry(
 				TEXT("NoLegends"),
-				LOCTEXT("NoLegendsLabel", "No legends yet - Add > Materials > Primitive Data Legend"),
+				bInstance
+					? LOCTEXT("NoInstanceLegendsLabel", "No legends yet - Add > Materials > Instance Data Legend")
+					: LOCTEXT("NoLegendsLabel", "No legends yet - Add > Materials > Primitive Data Legend"),
 				FText::GetEmpty(),
 				FSlateIcon(),
 				FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([] { return false; })));
@@ -384,7 +474,7 @@ private:
 
 		for (const FAssetData& LegendAsset : Legends)
 		{
-			const UPrimitiveDataLegend* Legend = Cast<UPrimitiveDataLegend>(LegendAsset.GetAsset());
+			const TLegend* Legend = Cast<TLegend>(LegendAsset.GetAsset());
 			if (!Legend)
 			{
 				continue;
@@ -408,30 +498,30 @@ private:
 				FText::FromName(LegendAsset.AssetName),
 				FText::Format(LOCTEXT("LegendEntryTooltip", "{0} parameter(s), {1} of {2} floats used."),
 					FText::AsNumber(Legend->Parameters.Num()), FText::AsNumber(Legend->GetUsedFloats()),
-					FText::AsNumber(UPrimitiveDataLegend::GetCapacity())),
+					FText::AsNumber(TLegend::GetCapacity())),
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateLambda([LegendPath, Selected, bAllBound]()
 					{
-						UPrimitiveDataLegend* Target = Cast<UPrimitiveDataLegend>(LegendPath.TryLoad());
+						TLegend* Target = Cast<TLegend>(LegendPath.TryLoad());
 						if (!Target)
 						{
 							return;
 						}
 						const FScopedTransaction Transaction(bAllBound
-							? LOCTEXT("UnbindTransaction", "Unbind from Primitive Data Legend")
-							: LOCTEXT("BindTransaction", "Bind to Primitive Data Legend"));
+							? LOCTEXT("UnbindTransaction", "Unbind from Legend")
+							: LOCTEXT("BindTransaction", "Bind to Legend"));
 						for (const FSoftObjectPath& Path : Selected)
 						{
 							if (UObject* Material = Path.TryLoad())
 							{
 								if (bAllBound)
 								{
-									FPrimitiveDataLegendBinding::Unbind(*Target, Material);
+									FBinding::Unbind(*Target, Material);
 								}
 								else
 								{
-									FPrimitiveDataLegendBinding::Bind(*Target, Material);
+									FBinding::Bind(*Target, Material);
 								}
 							}
 						}
@@ -444,10 +534,12 @@ private:
 
 	TSharedPtr<FPrimitiveDataParameterPinFactory> PinFactory;
 	FDelegateHandle LegendChangedHandle;
+	FDelegateHandle InstanceLegendChangedHandle;
 	FDelegateHandle PreSaveHandle;
 	FTSTicker::FDelegateHandle TickerHandle;
 
 	TMap<TWeakObjectPtr<UPrimitiveDataLegend>, FPendingLegend> PendingLegends;
+	TMap<TWeakObjectPtr<UInstanceDataLegend>, FPendingLegend> PendingInstanceLegends;
 	TSet<FSoftObjectPath> PendingSaveChecks;
 };
 

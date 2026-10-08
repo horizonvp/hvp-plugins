@@ -1,18 +1,11 @@
 #include "PrimitiveDataLegendBinding.h"
 
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Editor.h"
-#include "Framework/Notifications/NotificationManager.h"
-#include "Logging/MessageLog.h"
-#include "MaterialEditingLibrary.h"
+#include "LegendBindingCommon.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialFunction.h"
-#include "Misc/UObjectToken.h"
 #include "PrimitiveDataLegend.h"
-#include "Subsystems/AssetEditorSubsystem.h"
-#include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "PrimitiveDataLegendBinding"
 
@@ -63,34 +56,6 @@ namespace PrimitiveDataBinding
 			return true;
 		}
 		return false;
-	}
-
-	void Report(FMessageLog& Log, const UPrimitiveDataLegend& Legend, UObject* Material, const FPrimitiveDataBindingResult& Result)
-	{
-		for (const FText& Error : Result.Errors)
-		{
-			Log.Error()
-				->AddToken(FUObjectToken::Create(Material))
-				->AddToken(FTextToken::Create(Error))
-				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (legend:")))
-				->AddToken(FUObjectToken::Create(&Legend))
-				->AddToken(FTextToken::Create(LOCTEXT("Close", ")")));
-		}
-		for (const FText& Warning : Result.Warnings)
-		{
-			Log.Warning()
-				->AddToken(FUObjectToken::Create(Material))
-				->AddToken(FTextToken::Create(Warning))
-				->AddToken(FTextToken::Create(LOCTEXT("Via", "  (legend:")))
-				->AddToken(FUObjectToken::Create(&Legend))
-				->AddToken(FTextToken::Create(LOCTEXT("Close", ")")));
-		}
-		if (!Result.SkippedReason.IsEmpty())
-		{
-			Log.Warning()
-				->AddToken(FUObjectToken::Create(Material))
-				->AddToken(FTextToken::Create(Result.SkippedReason));
-		}
 	}
 }
 
@@ -220,21 +185,9 @@ FPrimitiveDataBindingResult FPrimitiveDataLegendBinding::Sync(const UPrimitiveDa
 		return Result;
 	}
 
-	// The material editor edits a COPY and writes it back over the original on Apply. Changing the
-	// original underneath it would be silently undone the next time anyone presses Apply there.
-	if (GEditor)
+	if (!LegendBindingCommon::CanWrite(MaterialOrFunction, Changes.Num(), Result))
 	{
-		if (UAssetEditorSubsystem* Editors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
-		{
-			if (Editors->FindEditorForAsset(MaterialOrFunction, /*bFocusIfOpen*/ false))
-			{
-				Result.SkippedReason = FText::Format(
-					LOCTEXT("OpenInEditor", "is open in the material editor, which works on a copy and would overwrite "
-						"these changes on Apply. {0} parameter(s) still need laying out - close it and sync again."),
-					FText::AsNumber(Changes.Num()));
-				return Result;
-			}
-		}
+		return Result;
 	}
 
 	MaterialOrFunction->Modify();
@@ -254,152 +207,36 @@ FPrimitiveDataBindingResult FPrimitiveDataLegendBinding::Sync(const UPrimitiveDa
 		}
 	}
 
-	if (Material)
-	{
-		UMaterialEditingLibrary::RecompileMaterial(Material);
-	}
-	else
-	{
-		UMaterialEditingLibrary::UpdateMaterialFunction(Function, nullptr);
-	}
-	MaterialOrFunction->MarkPackageDirty();
+	LegendBindingCommon::Recompile(MaterialOrFunction);
 
 	return Result;
 }
 
 void FPrimitiveDataLegendBinding::SyncAll(UPrimitiveDataLegend& Legend, bool bApply, const TMap<FName, FName>& Renames)
 {
-	FMessageLog Log(LogName);
-	bool bProblems = false;
-	int32 Written = 0;
-	int32 Renamed = 0;
-	int32 Checked = 0;
-
-	for (const TSoftObjectPtr<UObject>& Bound : Legend.BoundMaterials)
-	{
-		if (Bound.IsNull())
-		{
-			continue;
-		}
-
-		UObject* Material = Bound.LoadSynchronous();
-		if (!Material)
-		{
-			Log.Warning()
-				->AddToken(FUObjectToken::Create(&Legend))
-				->AddToken(FTextToken::Create(FText::Format(
-					LOCTEXT("Unloadable", "binds {0}, which could not be loaded. Remove it from Bound Materials if it was deleted."),
-					FText::FromString(Bound.ToString()))));
-			bProblems = true;
-			continue;
-		}
-
-		++Checked;
-		const FPrimitiveDataBindingResult Result = Sync(Legend, Material, bApply, Renames);
-		Written += Result.ParametersWritten;
-		Renamed += Result.ParametersRenamed;
-		if (!Result.IsClean())
-		{
-			PrimitiveDataBinding::Report(Log, Legend, Material, Result);
-			bProblems = true;
-		}
-	}
-
-	if (bProblems)
-	{
-		Log.Notify(FText::Format(LOCTEXT("Problems", "{0}: some bound materials need attention"),
-			FText::FromString(Legend.GetName())), EMessageSeverity::Warning, /*bForce*/ true);
-		return;
-	}
-
-	// Clean. Say so only when something actually happened - a no-op sync on every legend edit would
-	// otherwise put a toast up for typing a name.
-	if (Written > 0 || Renamed > 0 || !bApply)
-	{
-		FNotificationInfo Info(bApply
-			? FText::Format(LOCTEXT("Synced", "{0}: laid out {1} parameter(s), renamed {2}, across {3} material(s)"),
-				FText::FromString(Legend.GetName()), FText::AsNumber(Written), FText::AsNumber(Renamed), FText::AsNumber(Checked))
-			: FText::Format(LOCTEXT("Checked", "{0}: all {1} bound material(s) match"),
-				FText::FromString(Legend.GetName()), FText::AsNumber(Checked)));
-		Info.ExpireDuration = 4.f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-	}
+	LegendBindingCommon::SyncAll(Legend, bApply, Renames,
+		[](const UPrimitiveDataLegend& L, UObject* Material, bool bApplyOne, const TMap<FName, FName>& R) { return Sync(L, Material, bApplyOne, R); });
 }
 
 TArray<UPrimitiveDataLegend*> FPrimitiveDataLegendBinding::FindLegendsBinding(const UObject* MaterialOrFunction)
 {
-	TArray<UPrimitiveDataLegend*> Out;
-	if (!MaterialOrFunction)
-	{
-		return Out;
-	}
-
-	const FSoftObjectPath Path(MaterialOrFunction);
-	TArray<FAssetData> Assets;
-	FAssetRegistryModule::GetRegistry().GetAssetsByClass(UPrimitiveDataLegend::StaticClass()->GetClassPathName(), Assets);
-
-	// Legends are a handful of small assets, so loading them to read the binding list is cheaper than
-	// maintaining a searchable tag for it.
-	for (const FAssetData& Asset : Assets)
-	{
-		UPrimitiveDataLegend* Legend = Cast<UPrimitiveDataLegend>(Asset.GetAsset());
-		if (Legend && Legend->BoundMaterials.ContainsByPredicate(
-			[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; }))
-		{
-			Out.Add(Legend);
-		}
-	}
-	return Out;
+	return LegendBindingCommon::FindLegendsBinding<UPrimitiveDataLegend>(MaterialOrFunction);
 }
 
 void FPrimitiveDataLegendBinding::Bind(UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction)
 {
-	if (!MaterialOrFunction)
-	{
-		return;
-	}
-
-	for (UPrimitiveDataLegend* Other : FindLegendsBinding(MaterialOrFunction))
-	{
-		if (Other != &Legend)
-		{
-			Unbind(*Other, MaterialOrFunction);
-		}
-	}
-
-	const FSoftObjectPath Path(MaterialOrFunction);
-	if (Legend.BoundMaterials.ContainsByPredicate(
-		[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; }))
-	{
-		SyncAll(Legend, /*bApply*/ true);
-		return;
-	}
-
-	Legend.Modify();
-	Legend.BoundMaterials.Add(TSoftObjectPtr<UObject>(MaterialOrFunction));
-	// Through PostEditChange, not a direct sync: the legend notices its own change, re-snapshots, and
-	// its listener syncs - the same path a details-panel edit takes, so there is only one.
-	Legend.PostEditChange();
+	LegendBindingCommon::Bind(Legend, MaterialOrFunction, [](UPrimitiveDataLegend& L) { SyncAll(L, /*bApply*/ true); });
 }
 
 void FPrimitiveDataLegendBinding::Unbind(UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction)
 {
-	const FSoftObjectPath Path(MaterialOrFunction);
-	Legend.Modify();
-	const int32 Removed = Legend.BoundMaterials.RemoveAll(
-		[&Path](const TSoftObjectPtr<UObject>& Bound) { return Bound.ToSoftObjectPath() == Path; });
-	if (Removed > 0)
-	{
-		// The material keeps its layout. Unbinding stops the legend managing it; it does not undo
-		// what the legend wrote, which would change how the material renders.
-		Legend.PostEditChange();
-	}
+	LegendBindingCommon::Unbind(Legend, MaterialOrFunction);
 }
 
 void FPrimitiveDataLegendBinding::ReportTo(FMessageLog& Log, const UPrimitiveDataLegend& Legend, UObject* MaterialOrFunction,
 	const FPrimitiveDataBindingResult& Result)
 {
-	PrimitiveDataBinding::Report(Log, Legend, MaterialOrFunction, Result);
+	LegendBindingCommon::Report(Log, Legend, MaterialOrFunction, Result);
 }
 
 #undef LOCTEXT_NAMESPACE

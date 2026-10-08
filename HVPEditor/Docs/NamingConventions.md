@@ -370,9 +370,9 @@ told apart by `BlueprintType` and `ParentClass` instead, checked in this order:
 All 39 suffixes in `check_conventions.py` resolve deterministically. Nothing is guessed: a
 type with no rule is left alone rather than given a best-effort suffix.
 
-Three suffixes are newer than `check_conventions.py`'s list: `_BML` and `_AW` (above), and
-`_PDL` for a `HVPPrimitiveData` Primitive Data Legend. `_AW` and `_PDL` find their plugin's
-class by path, so a project without that plugin simply skips them. A new suffix needs two entries in the source: one
+Four suffixes are newer than `check_conventions.py`'s list: `_BML` and `_AW` (above), and
+`_PDL` and `_IDL` for `HVPPrimitiveData`'s Primitive Data Legend and Instance Data Legend. `_AW`,
+`_PDL` and `_IDL` find their plugin's class by path, so a project without that plugin simply skips them. A new suffix needs two entries in the source: one
 in `AssetSuffixResolver.cpp` (which type gets it) and one in `AssetNamingConfig.cpp`'s
 `BuiltInSuffixes` (so a name already carrying it is recognised).
 

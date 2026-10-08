@@ -5,10 +5,19 @@
 #include "SGraphPin.h"
 #include "Widgets/Input/SComboBox.h"
 
-class UK2Node_SetNamedPrimitiveData;
+/**
+ * Where a Parameter pin's dropdown gets its options: the chosen legend's parameter names in legend order
+ * (false with no legend chosen), and how to label one. Lets one widget serve the Set Named Primitive Data
+ * and Set Named Instance Data nodes.
+ */
+struct FNamedDataParameterSource
+{
+	TFunction<bool(TArray<FName>&)> GetNames;
+	TFunction<FText(FName)> Label;
+};
 
 /**
- * The Parameter pin on Set Named Primitive Data: a dropdown of the chosen legend's parameters, each
+ * The Parameter pin on the Set Named ... Data nodes: a dropdown of the chosen legend's parameters, each
  * labelled with its type and slot.
  *
  * The option list is rebuilt every time the dropdown opens rather than once at construction, so an
@@ -22,22 +31,22 @@ public:
 	SLATE_BEGIN_ARGS(SGraphPinPrimitiveDataParameter) {}
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs, UEdGraphPin* InPin);
+	void Construct(const FArguments& InArgs, UEdGraphPin* InPin, FNamedDataParameterSource InSource);
 
 protected:
 	virtual TSharedRef<SWidget> GetDefaultValueWidget() override;
 
 private:
-	UK2Node_SetNamedPrimitiveData* GetNode() const;
 	void RebuildOptions();
 	FText LabelFor(FName Name) const;
 	void OnSelected(TSharedPtr<FName> Item, ESelectInfo::Type Info);
 
+	FNamedDataParameterSource Source;
 	TArray<TSharedPtr<FName>> Options;
 	TSharedPtr<SComboBox<TSharedPtr<FName>>> Combo;
 };
 
-/** Hands the Parameter pin of Set Named Primitive Data the widget above. */
+/** Hands the Parameter pin of Set Named Primitive Data and Set Named Instance Data the widget above. */
 class FPrimitiveDataParameterPinFactory : public FGraphPanelPinFactory
 {
 public:

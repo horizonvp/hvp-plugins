@@ -215,6 +215,10 @@ struct FHandGrabHand
 	FQuat HeldGrabItemQuat = FQuat::Identity;
 	FQuat HeldGrabHandQuat = FQuat::Identity;
 	bool bHeldGrabRotValid = false; // hand rotation was readable at the grab
+	// The pose the follow set on Held this tick (GetGrabbedTransform). Cleared each tick before
+	// the follow runs, so it is never a stale pose from an earlier frame or an earlier hold.
+	FTransform FollowPose = FTransform::Identity;
+	bool bHasFollowPose = false;
 	// Carry-point source: LiveCarry is re-chosen every frame from the gesture; HeldCarry is
 	// LiveCarry as it stood when the grab closed, and is what PinchMid is measured from for
 	// as long as Held is valid. Measured on device: a holding hand's fist metric sits inside
@@ -546,6 +550,14 @@ public:
 	// player sees, but its transform and bones are live.
 	UFUNCTION(BlueprintPure, Category="Hand Grab")
 	USkinnedMeshComponent* GetHandMesh(int32 HandIndex) const;
+
+	// The world transform the follow set on this hand's held item during this frame's tick:
+	// location and rotation as written, scale the component's own (1 for an item source's item;
+	// the subsystem never scales). False if the hand holds nothing or holds a bFollow = false
+	// registration. The subsystem ticks between TG_PostPhysics and TG_PostUpdateWork: read in
+	// TG_PostUpdateWork for this frame's pose; an ordinary (pre-physics) Tick gets last frame's.
+	UFUNCTION(BlueprintPure, Category="Hand Grab")
+	bool GetGrabbedTransform(int32 HandIndex, FTransform& OutTransform) const;
 
 	// --- UTickableWorldSubsystem ---
 

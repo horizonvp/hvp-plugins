@@ -332,6 +332,17 @@ USkinnedMeshComponent* UHandGrabSubsystem::GetHandMesh(int32 HandIndex) const
 	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Mesh.Get() : nullptr;
 }
 
+bool UHandGrabSubsystem::GetGrabbedTransform(int32 HandIndex, FTransform& OutTransform) const
+{
+	// Held is checked too: ForceRelease and unregistering drop the hold between ticks.
+	if (!Hands.IsValidIndex(HandIndex) || !Hands[HandIndex].bHasFollowPose || !Hands[HandIndex].Held.IsValid())
+	{
+		return false;
+	}
+	OutTransform = Hands[HandIndex].FollowPose;
+	return true;
+}
+
 // --- Internals ---------------------------------------------------------------------------
 
 void UHandGrabSubsystem::ResolveHands()
@@ -708,6 +719,7 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 
 	// Held item chases the pinch midpoint (when its registration says to).
 	const FHandGrabbableParams* HeldParams = Hand.Held.IsValid() ? GetTargetParams(Hand.Held) : nullptr;
+	Hand.bHasFollowPose = false;
 	FVector ItemPos;
 	FQuat ItemQuat;
 	if (HeldParams && HeldParams->bFollow && GetTargetPose(Hand.Held, ItemPos, ItemQuat))
@@ -739,6 +751,9 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 			? Target
 			: FMath::VInterpTo(ItemPos, Target, DeltaTime, P.FollowSpeed);
 		SetTargetPose(Hand.Held, NewPos, ItemQuat, bRotate);
+		const UPrimitiveComponent* FollowComp = Hand.Held.Comp.Get();
+		Hand.FollowPose = FTransform(ItemQuat, NewPos, FollowComp ? FollowComp->GetComponentScale() : FVector::OneVector);
+		Hand.bHasFollowPose = true;
 
 		if (ShouldLog())
 		{

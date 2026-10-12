@@ -98,7 +98,7 @@ Lifecycle rules:
   consumers can put their item somewhere sane.
 
 Queries: `IsHeld(Comp)`, `GetHandCount()`, `IsHandPinching(i)`, `GetPinchLocation(i)`,
-`GetHeldComponent(i)`, `GetHandMesh(i)` (the skinned mesh the hand was found on).
+`GetHeldComponent(i)`, `GetHandMesh(i)` (the skinned mesh the hand was found on), `GetGrabbedTransform(i)` (the pose the follow set on the held item this frame; false when nothing is held or the registration has `bFollow` off).
 
 ### Many small things: item sources
 

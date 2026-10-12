@@ -98,7 +98,7 @@ Lifecycle rules:
   consumers can put their item somewhere sane.
 
 Queries: `IsHeld(Comp)`, `GetHandCount()`, `IsHandPinching(i)`, `GetPinchLocation(i)`,
-`GetHeldComponent(i)`.
+`GetHeldComponent(i)`, `GetHandMesh(i)` (the skinned mesh the hand was found on).
 
 ### Many small things: item sources
 

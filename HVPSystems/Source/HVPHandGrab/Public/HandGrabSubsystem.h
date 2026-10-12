@@ -541,6 +541,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Hand Grab")
 	UPrimitiveComponent* GetHeldComponent(int32 HandIndex) const;
 
+	// The skinned mesh a hand was found on, or null if the hand doesn't exist. On device this is
+	// the tracking-source mesh (only those grab; see ResolveHands), not necessarily the copy the
+	// player sees, but its transform and bones are live.
+	UFUNCTION(BlueprintPure, Category="Hand Grab")
+	USkinnedMeshComponent* GetHandMesh(int32 HandIndex) const;
+
 	// --- UTickableWorldSubsystem ---
 
 	virtual void Tick(float DeltaTime) override;

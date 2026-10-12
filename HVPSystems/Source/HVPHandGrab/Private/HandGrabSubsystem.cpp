@@ -327,6 +327,11 @@ UPrimitiveComponent* UHandGrabSubsystem::GetHeldComponent(int32 HandIndex) const
 	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Held.Comp.Get() : nullptr;
 }
 
+USkinnedMeshComponent* UHandGrabSubsystem::GetHandMesh(int32 HandIndex) const
+{
+	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Mesh.Get() : nullptr;
+}
+
 // --- Internals ---------------------------------------------------------------------------
 
 void UHandGrabSubsystem::ResolveHands()

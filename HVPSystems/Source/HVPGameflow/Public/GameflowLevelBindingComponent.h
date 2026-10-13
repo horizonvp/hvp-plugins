@@ -35,6 +35,25 @@ struct FGameflowLevelBinding
 	/** Grace period before the unload, for media/animations that linger past the state change. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gameflow", meta = (ClampMin = "0.0"))
 	double UnloadDelaySeconds = 0.0;
+
+	/**
+	 * Hide the levels (actors EndPlay, components unregister) as soon as the subtree is left, and use
+	 * UnloadDelaySeconds only to defer the unload itself. Unloading forces a full GC
+	 * (s.ForceGCAfterLevelStreamedOut), so this keeps that hitch off the transition frames without
+	 * leaving the old level on screen. Ignored when UnloadDelaySeconds is 0. A level another binding
+	 * still needs for the current state stays visible.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gameflow")
+	bool bHideDuringUnloadDelay = false;
+
+	/**
+	 * Optional earlier state (subtree) during which to stream the levels into memory without showing
+	 * them, so entering the bound state only has to make them visible. Their actors do not BeginPlay
+	 * until then. Waits for any previous copy to finish unloading first, so each entry still gets a
+	 * fresh level. Empty = load on entry as usual.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gameflow")
+	FString PreloadDuringState;
 };
 
 /**
@@ -45,7 +64,8 @@ struct FGameflowLevelBinding
  * on the gameflow controller and streams the level in; the state is only entered once the level is
  * visible and its actors have begun play. Works for requests and demands alike. Leaving the
  * subtree optionally unloads the level after a grace period; re-entering during the grace period
- * cancels the unload.
+ * cancels the unload. A binding can also preload its levels (loaded, not visible) during an
+ * earlier state, which leaves only the make-visible step for entry.
  *
  * Keys are hierarchical: a binding for "PMN" also covers "PMN/Step1/..." — moving around inside
  * the subtree neither reloads nor unloads.
@@ -96,6 +116,22 @@ private:
 	void ClearRequirementNextTick(const FString& BindingKey);
 	void UnloadBinding(const FString& BindingKey);
 
+	/** Hide a binding's levels now, ahead of its delayed unload (bHideDuringUnloadDelay). */
+	void HideBinding(const FString& BindingKey);
+
+	/**
+	 * Book-end guard: whether a binding other than BindingKey covers the current state and needs
+	 * Level, so leaving BindingKey's section must not hide or unload it.
+	 */
+	bool IsLevelNeededElsewhere(const FString& BindingKey, const TSoftObjectPtr<UWorld>& Level) const;
+
+	/** Start a preload for every binding whose PreloadDuringState contains State. */
+	void PreloadForState(const FString& State);
+
+	/** Load-not-visible each level whose previous copy is gone; keep retrying the rest while still in the window. */
+	void TryPreload(const FString& BindingKey);
+	void StopPreloadRetry(const FString& BindingKey);
+
 	/** Every level a binding needs: Level plus AdditionalLevels, nulls skipped. */
 	static void AppendBoundLevels(const FGameflowLevelBinding& Binding,
 		TArray<TSoftObjectPtr<UWorld>>& OutLevels);
@@ -118,4 +154,7 @@ private:
 
 	/** Pending delayed unloads, cancellable on re-entry. */
 	TMap<FString, FTimerHandle> PendingUnloads;
+
+	/** Preloads (by binding key) waiting on the previous copy of a level to finish unloading. */
+	TMap<FString, FTimerHandle> PendingPreloads;
 };

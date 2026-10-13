@@ -190,6 +190,22 @@ private:
 	void OnBlueprintPreCompile(UBlueprint* Blueprint)
 	{
 		const UClass* Parent = Blueprint ? Blueprint->ParentClass.Get() : nullptr;
+		if (Parent && Parent->IsChildOf(UCodeAnimationWeb::StaticClass()))
+		{
+			// Always, commandlets and tests included: the compile is about to destroy the class's
+			// variables, and every live Web's runtime (the class defaults' too, and Webs of Blueprints
+			// derived from this one) points at them. Left alone, freeing one later reads freed memory.
+			if (const UClass* Compiling = Blueprint->GeneratedClass)
+			{
+				for (TObjectIterator<UCodeAnimationWeb> It; It; ++It)
+				{
+					if (It->GetClass()->IsChildOf(Compiling))
+					{
+						It->ResetRuntime();
+					}
+				}
+			}
+		}
 		if (IsRunningCommandlet() || GIsAutomationTesting || !Parent || !Parent->IsChildOf(UCodeAnimationWeb::StaticClass()))
 		{
 			return;

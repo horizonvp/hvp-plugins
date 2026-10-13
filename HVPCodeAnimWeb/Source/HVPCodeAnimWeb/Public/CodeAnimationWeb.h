@@ -223,12 +223,21 @@ public:
 
 	virtual void PostCDOCompiled(const FPostCDOCompiledContext& Context) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	/**
+	 * Drops the runtime, which holds the class's variables (FProperty) to read, write and free
+	 * output values with. Called on every live Web just before its class recompiles, while those
+	 * variables still exist: the compile destroys them, and a runtime freed after that frees its
+	 * values through dangling properties. The next use rebuilds it from the new class.
+	 */
+	void ResetRuntime();
 #endif
 
 	/** Every enumerator of StateEnum as (key, display name), in enum order, hidden ones and _MAX left out. */
 	void GetStateList(TArray<TPair<FName, FText>>& OutStates) const;
 
 	virtual void BeginPlay() override;
+	virtual void BeginDestroy() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:

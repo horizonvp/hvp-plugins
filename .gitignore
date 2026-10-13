@@ -24,3 +24,6 @@ Build/
 # Misc
 *.log
 *.pyc
+
+# Third-party tools the HVPText font tools call; each machine fetches its own (Docs/HVPText.md)
+HVPSystems/Tools/HVPText/bin/

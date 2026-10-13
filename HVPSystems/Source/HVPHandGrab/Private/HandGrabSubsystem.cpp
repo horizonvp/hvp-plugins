@@ -165,16 +165,89 @@ void UHandGrabSubsystem::UnregisterGrabbable(UPrimitiveComponent* Component)
 	ForceRelease(Component);
 	for (FHandGrabHand& Hand : Hands)
 	{
-		if (Hand.Hovered.Get() == Component)
+		if (Hand.Hovered.Comp.Get() == Component)
 		{
-			SetHandHover(Hand, nullptr);
+			SetHandHover(Hand, FHandGrabTarget());
 		}
-		if (Hand.RecentHover.Get() == Component)
+		if (Hand.RecentHover.Comp.Get() == Component)
 		{
-			Hand.RecentHover = nullptr;
+			Hand.RecentHover.Reset();
 		}
 	}
 	Grabbables.RemoveAt(Index);
+}
+
+void UHandGrabSubsystem::RegisterItemSource(UObject* Source, const FHandGrabbableParams& Params)
+{
+	IHandGrabItemSource* Interface = Cast<IHandGrabItemSource>(Source);
+	if (!Interface)
+	{
+		UE_LOG(LogHVPHandGrab, Warning, TEXT("RegisterItemSource: %s does not implement IHandGrabItemSource"),
+			*GetNameSafe(Source));
+		return;
+	}
+	const int32 Existing = FindItemSource(Source);
+	if (Existing != INDEX_NONE)
+	{
+		ItemSources[Existing].Params = Params;
+		return;
+	}
+	FHandGrabItemSourceEntry Entry;
+	Entry.Object = Source;
+	Entry.Interface = Interface;
+	Entry.Params = Params;
+	ItemSources.Add(Entry);
+}
+
+void UHandGrabSubsystem::UnregisterItemSource(UObject* Source)
+{
+	const int32 Index = FindItemSource(Source);
+	if (Index == INDEX_NONE)
+	{
+		return;
+	}
+	ReleaseItems(Source);
+	ItemSources.RemoveAt(Index);
+}
+
+void UHandGrabSubsystem::SetItemSourceEnabled(UObject* Source, bool bEnabled)
+{
+	const int32 Index = FindItemSource(Source);
+	if (Index != INDEX_NONE)
+	{
+		ItemSources[Index].bEnabled = bEnabled;
+	}
+}
+
+void UHandGrabSubsystem::ReleaseItems(UObject* Source)
+{
+	for (FHandGrabHand& Hand : Hands)
+	{
+		if (Hand.Held.IsItem() && Hand.Held.Source.Get() == Source)
+		{
+			Hand.Held.Reset();
+		}
+		if (Hand.Hovered.IsItem() && Hand.Hovered.Source.Get() == Source)
+		{
+			SetHandHover(Hand, FHandGrabTarget());
+		}
+		if (Hand.RecentHover.IsItem() && Hand.RecentHover.Source.Get() == Source)
+		{
+			Hand.RecentHover.Reset();
+		}
+	}
+}
+
+bool UHandGrabSubsystem::IsItemHeld(const UObject* Source, int32 Item) const
+{
+	for (const FHandGrabHand& Hand : Hands)
+	{
+		if (Hand.Held.IsItem() && Hand.Held.Item == Item && Hand.Held.Source.Get() == Source)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void UHandGrabSubsystem::SetGrabbableEnabled(UPrimitiveComponent* Component, bool bEnabled)
@@ -190,9 +263,9 @@ void UHandGrabSubsystem::ForceRelease(UPrimitiveComponent* Component)
 {
 	for (FHandGrabHand& Hand : Hands)
 	{
-		if (Hand.Held.Get() == Component)
+		if (!Hand.Held.IsItem() && Hand.Held.Comp.Get() == Component)
 		{
-			Hand.Held = nullptr;
+			Hand.Held.Reset();
 		}
 	}
 }
@@ -201,7 +274,7 @@ void UHandGrabSubsystem::ForceRelease(UPrimitiveComponent* Component)
 
 bool UHandGrabSubsystem::IsHeld(const UPrimitiveComponent* Component) const
 {
-	return Component && IsHeldByAnyHand(Component);
+	return Component && IsHeldByAnyHand(FHandGrabTarget::OfComponent(const_cast<UPrimitiveComponent*>(Component)));
 }
 
 bool UHandGrabSubsystem::IsHandPinching(int32 HandIndex) const
@@ -251,7 +324,23 @@ bool UHandGrabSubsystem::GetHandQuat(const FHandGrabHand& Hand, FQuat& OutQuat)
 
 UPrimitiveComponent* UHandGrabSubsystem::GetHeldComponent(int32 HandIndex) const
 {
-	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Held.Get() : nullptr;
+	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Held.Comp.Get() : nullptr;
+}
+
+USkinnedMeshComponent* UHandGrabSubsystem::GetHandMesh(int32 HandIndex) const
+{
+	return Hands.IsValidIndex(HandIndex) ? Hands[HandIndex].Mesh.Get() : nullptr;
+}
+
+bool UHandGrabSubsystem::GetGrabbedTransform(int32 HandIndex, FTransform& OutTransform) const
+{
+	// Held is checked too: ForceRelease and unregistering drop the hold between ticks.
+	if (!Hands.IsValidIndex(HandIndex) || !Hands[HandIndex].bHasFollowPose || !Hands[HandIndex].Held.IsValid())
+	{
+		return false;
+	}
+	OutTransform = Hands[HandIndex].FollowPose;
+	return true;
 }
 
 // --- Internals ---------------------------------------------------------------------------
@@ -281,12 +370,8 @@ void UHandGrabSubsystem::ResolveHands()
 	// its item is no longer held) and clear hover.
 	for (int32 i = 0; i < Hands.Num(); ++i)
 	{
-		if (UPrimitiveComponent* Held = Hands[i].Held.Get())
-		{
-			Hands[i].Held = nullptr;
-			OnReleased.Broadcast(Held, i, Hands[i].PinchMid);
-		}
-		SetHandHover(Hands[i], nullptr);
+		ReleaseHeld(Hands[i], i);
+		SetHandHover(Hands[i], FHandGrabTarget());
 	}
 	Hands.Reset();
 	CachedPawn = Pawn;
@@ -435,16 +520,24 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 	if (!MeasureHand(Hand))
 	{
 		// ResolveHands rebuilds next tick; just release cleanly now.
-		if (UPrimitiveComponent* Held = Hand.Held.Get())
-		{
-			Hand.Held = nullptr;
-			OnReleased.Broadcast(Held, HandIndex, Hand.PinchMid);
-		}
+		ReleaseHeld(Hand, HandIndex);
 		Hand.bPinching = false;
 		Hand.bPinchClosed = false;
 		Hand.bFistClosed = false;
-		SetHandHover(Hand, nullptr);
+		SetHandHover(Hand, FHandGrabTarget());
 		return;
+	}
+
+	// A held item whose source dropped it (or a destroyed component) is gone: let go.
+	FVector HeldLocation;
+	FQuat HeldQuat;
+	if (Hand.Held.IsItem() && !GetTargetPose(Hand.Held, HeldLocation, HeldQuat))
+	{
+		ReleaseHeld(Hand, HandIndex);
+	}
+	else if (!Hand.Held.IsItem() && !Hand.Held.IsValid())
+	{
+		Hand.Held.Reset();
 	}
 
 	// Each gesture keeps its own hysteresis (close tight, open wide) so tracking jitter at
@@ -520,42 +613,37 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 		Hand.SqueezeRefPinch = Hand.PinchMetric;
 		Hand.SqueezeRefFist = Hand.FistMetric;
 
-		UPrimitiveComponent* Remembered =
-			(Hand.TimeSinceRecentHover <= HoverMemorySeconds) ? Hand.RecentHover.Get() : nullptr;
-		SetHandHover(Hand, nullptr);
+		const FHandGrabTarget Remembered = (Hand.TimeSinceRecentHover <= HoverMemorySeconds)
+			? Hand.RecentHover : FHandGrabTarget();
+		SetHandHover(Hand, FHandGrabTarget());
 
 		if (CanHandGrab(Hand))
 		{
-			int32 Candidate = FindGrabCandidateForHand(Hand);
+			FHandGrabTarget Candidate = FindGrabCandidateForHand(Hand);
 			const TCHAR* Reason = TEXT("close");
-			if (Candidate == INDEX_NONE && Remembered)
+			if (!Candidate.IsValid() && Remembered.IsValid())
 			{
 				// The open hand was aiming at this a moment ago; closing drifted the grab
 				// point off it. Take it if it's still roughly in reach of any probe.
-				const int32 RememberedIndex = FindGrabbable(Remembered);
-				if (RememberedIndex != INDEX_NONE && Grabbables[RememberedIndex].bEnabled
-					&& !IsHeldByAnyHand(Remembered))
+				bool bEnabled = false;
+				const FHandGrabbableParams* Params = GetTargetParams(Remembered, &bEnabled);
+				if (Params && bEnabled && !IsHeldByAnyHand(Remembered))
 				{
 					const FVector Probes[] = {Hand.PinchMid, Hand.ThumbTip, Hand.IndexTip,
 						Hand.MiddleTip, Hand.PalmPoint};
 					for (const FVector& Probe : Probes)
 					{
-						FVector OnBody;
-						float D = Remembered->GetClosestPointOnCollision(Probe, OnBody);
-						if (D < 0.f)
+						const float D = GetTargetReachDistance(Remembered, Probe);
+						if (D >= 0.f && D < Params->GrabRadius * HoverMemoryReachScale)
 						{
-							D = FVector::Dist(Probe, Remembered->Bounds.Origin);
-						}
-						if (D < Grabbables[RememberedIndex].Params.GrabRadius * HoverMemoryReachScale)
-						{
-							Candidate = RememberedIndex;
+							Candidate = Remembered;
 							Reason = TEXT("hover-memory");
 							break;
 						}
 					}
 				}
 			}
-			if (Candidate != INDEX_NONE)
+			if (Candidate.IsValid())
 			{
 				GrabCandidate(Hand, HandIndex, Candidate, Reason);
 			}
@@ -573,18 +661,14 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 			Hand.bPinching = false;
 			Hand.TimeOpen = 0.f;
 			Hand.bSqueezeArmed = false;
-			if (UPrimitiveComponent* Held = Hand.Held.Get())
+			if (Hand.Held.IsValid() && ShouldLog())
 			{
-				Hand.Held = nullptr;
-				if (ShouldLog())
-				{
-					UE_LOG(LogHVPHandGrab, Log,
-						TEXT("Hand %d RELEASE %s (pinch %.2f fist %.2f scale %.2f)"),
-						HandIndex, *GetNameSafe(Held->GetOwner()), Hand.PinchMetric,
-						Hand.FistMetric, Hand.SizeScale);
-				}
-				OnReleased.Broadcast(Held, HandIndex, Hand.PinchMid);
+				UE_LOG(LogHVPHandGrab, Log,
+					TEXT("Hand %d RELEASE %s (pinch %.2f fist %.2f scale %.2f)"),
+					HandIndex, *GetTargetName(Hand.Held), Hand.PinchMetric,
+					Hand.FistMetric, Hand.SizeScale);
 			}
+			ReleaseHeld(Hand, HandIndex);
 		}
 	}
 	else if (Hand.bPinching)
@@ -595,13 +679,13 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 
 		if (!Hand.Held.IsValid() && CanHandGrab(Hand))
 		{
-			const int32 Candidate = FindGrabCandidateForHand(Hand);
-			if (Candidate != INDEX_NONE && Hand.TimeSinceClose <= GrabGraceSeconds)
+			const FHandGrabTarget Candidate = FindGrabCandidateForHand(Hand);
+			if (Candidate.IsValid() && Hand.TimeSinceClose <= GrabGraceSeconds)
 			{
 				// Closed a beat before arriving (or tracking lagged the reach).
 				GrabCandidate(Hand, HandIndex, Candidate, TEXT("grace"));
 			}
-			else if (Candidate == INDEX_NONE)
+			else if (!Candidate.IsValid())
 			{
 				// Out of reach: follow the hand's current closure, so arriving compares
 				// against the pose it arrived in.
@@ -633,61 +717,62 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 		}
 	}
 
-	// Held component chases the pinch midpoint (when its registration says to).
-	if (UPrimitiveComponent* Held = Hand.Held.Get())
+	// Held item chases the pinch midpoint (when its registration says to).
+	const FHandGrabbableParams* HeldParams = Hand.Held.IsValid() ? GetTargetParams(Hand.Held) : nullptr;
+	Hand.bHasFollowPose = false;
+	FVector ItemPos;
+	FQuat ItemQuat;
+	if (HeldParams && HeldParams->bFollow && GetTargetPose(Hand.Held, ItemPos, ItemQuat))
 	{
-		const int32 GrabIndex = FindGrabbable(Held);
-		if (GrabIndex != INDEX_NONE && Grabbables[GrabIndex].Params.bFollow)
+		const FHandGrabbableParams& P = *HeldParams;
+
+		// Rotation FIRST, then position, both from this tick's one read of the hand. The
+		// position solve below anchors the grip through the item's NEW rotation, so turning
+		// the item and then re-solving lands the grip on the pinch within the same frame —
+		// the ordering a consumer's own tick can never get (see the bFollowRotation comment
+		// in the header).
+		FQuat HandQuat;
+		const bool bRotate = P.bFollowRotation && Hand.bHeldGrabRotValid && GetHandQuat(Hand, HandQuat);
+		if (bRotate)
 		{
-			const FHandGrabbableParams& P = Grabbables[GrabIndex].Params;
+			const FQuat TargetQuat =
+				(HandQuat * Hand.HeldGrabHandQuat.Inverse()) * Hand.HeldGrabItemQuat;
+			ItemQuat = P.bRigidFollow
+				? TargetQuat
+				: FMath::QInterpTo(ItemQuat, TargetQuat, DeltaTime, P.FollowSpeed);
+		}
 
-			// Rotation FIRST, then position, both from this tick's one read of the hand. The
-			// position solve below anchors the grip through the component's CURRENT rotation,
-			// so turning the item here and then re-solving lands the grip on the pinch within
-			// the same frame — the ordering a consumer's own tick can never get (see the
-			// bFollowRotation comment in the header).
-			FQuat HandQuat;
-			if (P.bFollowRotation && Hand.bHeldGrabRotValid && GetHandQuat(Hand, HandQuat))
-			{
-				const FQuat TargetQuat =
-					(HandQuat * Hand.HeldGrabHandQuat.Inverse()) * Hand.HeldGrabItemQuat;
-				Held->SetWorldRotation(P.bRigidFollow
-					? TargetQuat
-					: FMath::QInterpTo(Held->GetComponentQuat(), TargetQuat, DeltaTime, P.FollowSpeed));
-			}
+		// Chase so the GRABBED POINT stays at the pinch — the item hangs from wherever you
+		// took hold of it (no snap to any center), and rotation pivots about that grip, since
+		// the anchor is re-solved from the item's current transform every tick.
+		const FVector WorldGrabPoint = ItemPos + ItemQuat.RotateVector(Hand.HeldGrabLocal);
+		const FVector Target = ItemPos + (Hand.PinchMid - WorldGrabPoint);
+		const FVector NewPos = P.bRigidFollow
+			? Target
+			: FMath::VInterpTo(ItemPos, Target, DeltaTime, P.FollowSpeed);
+		SetTargetPose(Hand.Held, NewPos, ItemQuat, bRotate);
+		const UPrimitiveComponent* FollowComp = Hand.Held.Comp.Get();
+		Hand.FollowPose = FTransform(ItemQuat, NewPos, FollowComp ? FollowComp->GetComponentScale() : FVector::OneVector);
+		Hand.bHasFollowPose = true;
 
-			// Chase so the GRABBED POINT stays at the pinch — the item hangs from
-			// wherever you took hold of it (no snap to any center), and rotation pivots
-			// about that grip, since the anchor is re-solved from the component's current
-			// transform every tick.
-			const FVector WorldGrabPoint = Held->GetComponentLocation()
-				+ Held->GetComponentQuat().RotateVector(Hand.HeldGrabLocal);
-			const FVector Target =
-				Held->GetComponentLocation() + (Hand.PinchMid - WorldGrabPoint);
-			const FVector NewPos = Grabbables[GrabIndex].Params.bRigidFollow
-				? Target
-				: FMath::VInterpTo(Held->GetComponentLocation(),
-					Target, DeltaTime, Grabbables[GrabIndex].Params.FollowSpeed);
-			Held->SetWorldLocation(NewPos);
-
-			if (ShouldLog())
-			{
-				// The one number that matters for "did it move in my hand": the item's origin
-				// expressed in the HAND's frame. Rigid in hand = constant. A snap = a jump.
-				// gripErr is how far the grip sat off the pinch BEFORE this solve (the error the
-				// solve had to absorb this frame — nonzero means something else moved it).
-				FQuat LogHandQuat = FQuat::Identity;
-				GetHandQuat(Hand, LogHandQuat);
-				const FVector OffsetInHand = LogHandQuat.UnrotateVector(NewPos - Hand.PinchMid);
-				UE_LOG(LogHVPHandGrab, Log,
-					TEXT("Hand %d FOLLOW %s carry=%d/%d pinch=%s pos=%s gripErr=%.2f offsetInHand=%s rot=%s scale=%s"),
-					HandIndex, *GetNameSafe(Held->GetOwner()),
-					static_cast<int32>(Hand.HeldCarry), static_cast<int32>(Hand.LiveCarry),
-					*Hand.PinchMid.ToString(),
-					*NewPos.ToString(), FVector::Dist(WorldGrabPoint, Hand.PinchMid),
-					*OffsetInHand.ToString(), *Held->GetComponentRotation().ToString(),
-					*Held->GetComponentScale().ToString());
-			}
+		if (ShouldLog())
+		{
+			// The one number that matters for "did it move in my hand": the item's origin
+			// expressed in the HAND's frame. Rigid in hand = constant. A snap = a jump.
+			// gripErr is how far the grip sat off the pinch BEFORE this solve (the error the
+			// solve had to absorb this frame — nonzero means something else moved it).
+			FQuat LogHandQuat = FQuat::Identity;
+			GetHandQuat(Hand, LogHandQuat);
+			const FVector OffsetInHand = LogHandQuat.UnrotateVector(NewPos - Hand.PinchMid);
+			const UPrimitiveComponent* HeldComp = Hand.Held.Comp.Get();
+			UE_LOG(LogHVPHandGrab, Log,
+				TEXT("Hand %d FOLLOW %s carry=%d/%d pinch=%s pos=%s gripErr=%.2f offsetInHand=%s rot=%s scale=%s"),
+				HandIndex, *GetTargetName(Hand.Held),
+				static_cast<int32>(Hand.HeldCarry), static_cast<int32>(Hand.LiveCarry),
+				*Hand.PinchMid.ToString(),
+				*NewPos.ToString(), FVector::Dist(WorldGrabPoint, Hand.PinchMid),
+				*OffsetInHand.ToString(), *ItemQuat.Rotator().ToString(),
+				HeldComp ? *HeldComp->GetComponentScale().ToString() : TEXT("-"));
 		}
 	}
 
@@ -695,11 +780,9 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 	// anyway — no "you can pick this up" hint on things you can't.
 	if (!Hand.bPinching)
 	{
-		const int32 Candidate = CanHandGrab(Hand) ? FindGrabCandidateForHand(Hand) : INDEX_NONE;
-		UPrimitiveComponent* NewHover =
-			Candidate != INDEX_NONE ? Grabbables[Candidate].Comp.Get() : nullptr;
+		const FHandGrabTarget NewHover = CanHandGrab(Hand) ? FindGrabCandidateForHand(Hand) : FHandGrabTarget();
 		SetHandHover(Hand, NewHover);
-		if (NewHover)
+		if (NewHover.IsValid())
 		{
 			Hand.RecentHover = NewHover;
 			Hand.TimeSinceRecentHover = 0.f;
@@ -721,8 +804,7 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 				Hand.FistMetric < NoMetric ? Hand.FistMetric : -1.f, FistCloseDistance,
 				FistOpenDistance, Hand.SizeScale, Hand.bPinchClosed ? 1 : 0,
 				Hand.bFistClosed ? 1 : 0, Hand.bPinching ? 1 : 0,
-				*GetNameSafe(Hand.Held.IsValid() ? Hand.Held->GetOwner() : nullptr),
-				*GetNameSafe(Hand.Hovered.IsValid() ? Hand.Hovered->GetOwner() : nullptr));
+				*GetTargetName(Hand.Held), *GetTargetName(Hand.Hovered));
 		}
 	}
 
@@ -774,108 +856,132 @@ bool UHandGrabSubsystem::CanHandGrab(const FHandGrabHand& Hand) const
 	return true;
 }
 
-void UHandGrabSubsystem::GrabCandidate(FHandGrabHand& Hand, int32 HandIndex, int32 Candidate,
-	const TCHAR* Reason)
+void UHandGrabSubsystem::GrabCandidate(FHandGrabHand& Hand, int32 HandIndex,
+	const FHandGrabTarget& Candidate, const TCHAR* Reason)
 {
-	UPrimitiveComponent* Comp = Grabbables.IsValidIndex(Candidate)
-		? Grabbables[Candidate].Comp.Get() : nullptr;
-	if (!Comp)
+	const FHandGrabbableParams* Params = GetTargetParams(Candidate);
+	FVector ItemPos;
+	FQuat ItemQuat;
+	if (!Params || !GetTargetPose(Candidate, ItemPos, ItemQuat))
 	{
 		return;
 	}
-	Hand.Held = Comp;
+	Hand.Held = Candidate;
 	Hand.bSqueezeArmed = false;
 	// Freeze the carry-point source for this hold (see FHandGrabHand::HeldCarry).
 	Hand.HeldCarry = Hand.LiveCarry;
 	// Stick to the point you actually took hold of: the nearest point on the collision body
-	// (the pinch itself when it's inside the volume), stored component-local so it rides the
+	// (the pinch itself when it's inside the volume), stored item-local so it rides the
 	// item's motion and rotation.
 	// bPreserveGrabOffset anchors on the pinch itself, so the follow target resolves to the
 	// item's current position and it never travels to the hand at all.
 	FVector GrabPoint = Hand.PinchMid;
-	if (!Grabbables[Candidate].Params.bPreserveGrabOffset)
+	if (!Params->bPreserveGrabOffset)
 	{
 		FVector OnBody;
-		if (Comp->GetClosestPointOnCollision(Hand.PinchMid, OnBody) > 0.f)
+		if (GetTargetSurfaceDistance(Candidate, Hand.PinchMid, OnBody) > 0.f)
 		{
 			GrabPoint = OnBody;
 		}
 	}
-	Hand.HeldGrabLocal = Comp->GetComponentQuat().UnrotateVector(
-		GrabPoint - Comp->GetComponentLocation());
+	Hand.HeldGrabLocal = ItemQuat.UnrotateVector(GrabPoint - ItemPos);
 
 	// Rotation reference frame for bFollowRotation. A hand whose rotation can't be read
 	// simply leaves the item at its grab-time orientation.
-	Hand.HeldGrabItemQuat = Comp->GetComponentQuat();
+	Hand.HeldGrabItemQuat = ItemQuat;
 	Hand.bHeldGrabRotValid = GetHandQuat(Hand, Hand.HeldGrabHandQuat);
 
 	if (ShouldLog())
 	{
 		UE_LOG(LogHVPHandGrab, Log,
 			TEXT("Hand %d GRAB %s via %s (pinch %.2f fist %.2f scale %.2f, %.2fs after close)"),
-			HandIndex, *GetNameSafe(Comp->GetOwner()), Reason, Hand.PinchMetric,
+			HandIndex, *GetTargetName(Candidate), Reason, Hand.PinchMetric,
 			Hand.FistMetric < NoMetric ? Hand.FistMetric : -1.f, Hand.SizeScale,
 			Hand.TimeSinceClose);
 		UE_LOG(LogHVPHandGrab, Log,
 			TEXT("Hand %d GRAB-REF pinch=%s pos=%s grabLocal=%s itemRot=%s handRotValid=%d preserve=%d rigid=%d"),
-			HandIndex, *Hand.PinchMid.ToString(), *Comp->GetComponentLocation().ToString(),
+			HandIndex, *Hand.PinchMid.ToString(), *ItemPos.ToString(),
 			*Hand.HeldGrabLocal.ToString(), *Hand.HeldGrabItemQuat.Rotator().ToString(),
-			Hand.bHeldGrabRotValid ? 1 : 0,
-			Grabbables[Candidate].Params.bPreserveGrabOffset ? 1 : 0,
-			Grabbables[Candidate].Params.bRigidFollow ? 1 : 0);
+			Hand.bHeldGrabRotValid ? 1 : 0, Params->bPreserveGrabOffset ? 1 : 0,
+			Params->bRigidFollow ? 1 : 0);
 	}
-	OnGrabbed.Broadcast(Comp, HandIndex, Hand.PinchMid);
+	BroadcastGrabbed(Candidate, HandIndex, Hand.PinchMid);
 }
 
-int32 UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, float ReachScale) const
+void UHandGrabSubsystem::ReleaseHeld(FHandGrabHand& Hand, int32 HandIndex)
 {
-	float Unused = 0.f;
-	return FindGrabCandidate(WorldPos, ReachScale, Unused);
+	if (!Hand.Held.IsValid())
+	{
+		Hand.Held.Reset();
+		return;
+	}
+	const FHandGrabTarget Released = Hand.Held;
+	Hand.Held.Reset();
+	BroadcastReleased(Released, HandIndex, Hand.PinchMid);
 }
 
-int32 UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, float ReachScale,
+FHandGrabTarget UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, float ReachScale,
 	float& OutDistance) const
 {
-	int32 Best = INDEX_NONE;
+	FHandGrabTarget Best;
 	float BestDist = TNumericLimits<float>::Max();
 	for (int32 i = 0; i < Grabbables.Num(); ++i)
 	{
-		const UPrimitiveComponent* Comp = Grabbables[i].Comp.Get();
-		if (!Comp || !Grabbables[i].bEnabled || IsHeldByAnyHand(Comp))
+		UPrimitiveComponent* Comp = Grabbables[i].Comp.Get();
+		if (!Comp || !Grabbables[i].bEnabled)
+		{
+			continue;
+		}
+		const FHandGrabTarget Target = FHandGrabTarget::OfComponent(Comp);
+		if (IsHeldByAnyHand(Target))
 		{
 			continue;
 		}
 		// Distance to the collision SURFACE — 0 anywhere inside the volume, so the whole
 		// body is grabbable and GrabRadius is reach beyond it. Falls back to the center
 		// of volume (bounds center) when the component has no usable collision.
-		FVector OnBody;
-		float Dist = Comp->GetClosestPointOnCollision(WorldPos, OnBody);
-		if (Dist < 0.f)
-		{
-			Dist = FVector::Dist(WorldPos, Comp->Bounds.Origin);
-		}
+		const float Dist = GetTargetReachDistance(Target, WorldPos);
 		if (Dist < Grabbables[i].Params.GrabRadius * ReachScale && Dist < BestDist)
 		{
 			BestDist = Dist;
-			Best = i;
+			Best = Target;
+		}
+	}
+
+	// Item sources answer for their own items: one nearest-item query each, not a scan here.
+	for (const FHandGrabItemSourceEntry& Entry : ItemSources)
+	{
+		UObject* Source = Entry.Object.Get();
+		if (!Source || !Entry.bEnabled)
+		{
+			continue;
+		}
+		const float Reach = FMath::Min(Entry.Params.GrabRadius * ReachScale, BestDist);
+		float Dist = 0.f;
+		const int32 Item = Entry.Interface->FindGrabItem(WorldPos, Reach,
+			[this, Source](int32 Candidate) { return !IsItemHeld(Source, Candidate); }, Dist);
+		if (Item != INDEX_NONE && Dist < Reach)
+		{
+			BestDist = Dist;
+			Best = FHandGrabTarget::OfItem(Source, Item);
 		}
 	}
 	OutDistance = BestDist;
 	return Best;
 }
 
-int32 UHandGrabSubsystem::FindGrabCandidateForHand(const FHandGrabHand& Hand) const
+FHandGrabTarget UHandGrabSubsystem::FindGrabCandidateForHand(const FHandGrabHand& Hand) const
 {
 	// The grab point first; the fingertips and palm as backups, since the item the player is
 	// reaching for is often touching a fingertip while the grab point sits a few cm off it.
 	float BestScore = TNumericLimits<float>::Max();
-	int32 Best = INDEX_NONE;
+	FHandGrabTarget Best;
 
 	auto Consider = [&](const FVector& Probe, float Penalty)
 	{
 		float Dist = 0.f;
-		const int32 Candidate = FindGrabCandidate(Probe, 1.f, Dist);
-		if (Candidate != INDEX_NONE && Dist + Penalty < BestScore)
+		const FHandGrabTarget Candidate = FindGrabCandidate(Probe, 1.f, Dist);
+		if (Candidate.IsValid() && Dist + Penalty < BestScore)
 		{
 			BestScore = Dist + Penalty;
 			Best = Candidate;
@@ -898,11 +1004,11 @@ bool UHandGrabSubsystem::ShouldLog() const
 	return bLogGestures || CVarHandGrabLogGestures.GetValueOnGameThread() != 0;
 }
 
-bool UHandGrabSubsystem::IsHeldByAnyHand(const UPrimitiveComponent* Comp) const
+bool UHandGrabSubsystem::IsHeldByAnyHand(const FHandGrabTarget& Target) const
 {
 	for (const FHandGrabHand& Hand : Hands)
 	{
-		if (Hand.Held.Get() == Comp)
+		if (Hand.Held == Target)
 		{
 			return true;
 		}
@@ -928,32 +1034,203 @@ int32 UHandGrabSubsystem::FindGrabbable(const UPrimitiveComponent* Comp) const
 		[Comp](const FHandGrabbable& G) { return G.Comp.Get() == Comp; });
 }
 
-void UHandGrabSubsystem::SetHandHover(FHandGrabHand& Hand, UPrimitiveComponent* NewHover)
+int32 UHandGrabSubsystem::FindItemSource(const UObject* Source) const
 {
-	UPrimitiveComponent* OldHover = Hand.Hovered.Get();
+	return ItemSources.IndexOfByPredicate(
+		[Source](const FHandGrabItemSourceEntry& E) { return E.Object.Get() == Source; });
+}
+
+// --- Component/item dispatch -------------------------------------------------------------
+
+const FHandGrabbableParams* UHandGrabSubsystem::GetTargetParams(const FHandGrabTarget& Target,
+	bool* bOutEnabled) const
+{
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		if (Index == INDEX_NONE || !Target.Source.IsValid())
+		{
+			return nullptr;
+		}
+		if (bOutEnabled)
+		{
+			*bOutEnabled = ItemSources[Index].bEnabled;
+		}
+		return &ItemSources[Index].Params;
+	}
+	const int32 Index = Target.Comp.IsValid() ? FindGrabbable(Target.Comp.Get()) : INDEX_NONE;
+	if (Index == INDEX_NONE)
+	{
+		return nullptr;
+	}
+	if (bOutEnabled)
+	{
+		*bOutEnabled = Grabbables[Index].bEnabled;
+	}
+	return &Grabbables[Index].Params;
+}
+
+float UHandGrabSubsystem::GetTargetSurfaceDistance(const FHandGrabTarget& Target, const FVector& Probe,
+	FVector& OutClosest) const
+{
+	OutClosest = Probe;
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		return (Index != INDEX_NONE && Target.Source.IsValid())
+			? ItemSources[Index].Interface->GetGrabItemDistance(Target.Item, Probe, OutClosest)
+			: -1.f;
+	}
+	const UPrimitiveComponent* Comp = Target.Comp.Get();
+	if (!Comp)
+	{
+		return -1.f;
+	}
+	FVector OnBody;
+	const float Dist = Comp->GetClosestPointOnCollision(Probe, OnBody);
+	if (Dist >= 0.f)
+	{
+		OutClosest = OnBody;
+	}
+	return Dist;
+}
+
+float UHandGrabSubsystem::GetTargetReachDistance(const FHandGrabTarget& Target, const FVector& Probe) const
+{
+	FVector Unused;
+	const float Dist = GetTargetSurfaceDistance(Target, Probe, Unused);
+	if (Dist >= 0.f || Target.IsItem())
+	{
+		return Dist;
+	}
+	const UPrimitiveComponent* Comp = Target.Comp.Get();
+	return Comp ? FVector::Dist(Probe, Comp->Bounds.Origin) : -1.f;
+}
+
+bool UHandGrabSubsystem::GetTargetPose(const FHandGrabTarget& Target, FVector& OutLocation,
+	FQuat& OutRotation) const
+{
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		return Index != INDEX_NONE && Target.Source.IsValid()
+			&& ItemSources[Index].Interface->GetGrabItemPose(Target.Item, OutLocation, OutRotation);
+	}
+	const UPrimitiveComponent* Comp = Target.Comp.Get();
+	if (!Comp)
+	{
+		return false;
+	}
+	OutLocation = Comp->GetComponentLocation();
+	OutRotation = Comp->GetComponentQuat();
+	return true;
+}
+
+void UHandGrabSubsystem::SetTargetPose(const FHandGrabTarget& Target, const FVector& Location,
+	const FQuat& Rotation, bool bRotate)
+{
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		if (Index != INDEX_NONE && Target.Source.IsValid())
+		{
+			ItemSources[Index].Interface->SetGrabItemPose(Target.Item, Location, Rotation);
+		}
+		return;
+	}
+	if (UPrimitiveComponent* Comp = Target.Comp.Get())
+	{
+		if (bRotate)
+		{
+			Comp->SetWorldRotation(Rotation);
+		}
+		Comp->SetWorldLocation(Location);
+	}
+}
+
+FString UHandGrabSubsystem::GetTargetName(const FHandGrabTarget& Target) const
+{
+	if (Target.IsItem())
+	{
+		return FString::Printf(TEXT("%s#%d"), *GetNameSafe(Target.Source.Get()), Target.Item);
+	}
+	const UPrimitiveComponent* Comp = Target.Comp.Get();
+	return GetNameSafe(Comp ? Comp->GetOwner() : nullptr);
+}
+
+void UHandGrabSubsystem::BroadcastGrabbed(const FHandGrabTarget& Target, int32 HandIndex, const FVector& Pinch)
+{
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		if (Index != INDEX_NONE && Target.Source.IsValid())
+		{
+			ItemSources[Index].Interface->OnGrabItemGrabbed(Target.Item, HandIndex, Pinch);
+		}
+	}
+	else if (UPrimitiveComponent* Comp = Target.Comp.Get())
+	{
+		OnGrabbed.Broadcast(Comp, HandIndex, Pinch);
+	}
+}
+
+void UHandGrabSubsystem::BroadcastReleased(const FHandGrabTarget& Target, int32 HandIndex, const FVector& Pinch)
+{
+	if (Target.IsItem())
+	{
+		const int32 Index = FindItemSource(Target.Source.Get());
+		if (Index != INDEX_NONE && Target.Source.IsValid())
+		{
+			ItemSources[Index].Interface->OnGrabItemReleased(Target.Item, HandIndex, Pinch);
+		}
+	}
+	else if (UPrimitiveComponent* Comp = Target.Comp.Get())
+	{
+		OnReleased.Broadcast(Comp, HandIndex, Pinch);
+	}
+}
+
+void UHandGrabSubsystem::SetHandHover(FHandGrabHand& Hand, const FHandGrabTarget& NewHover)
+{
+	const FHandGrabTarget OldHover = Hand.Hovered;
 	if (OldHover == NewHover)
 	{
 		return;
 	}
 	Hand.Hovered = NewHover;
 
-	// Refcount per component so Begin fires on the FIRST hovering hand and End on the LAST.
-	if (OldHover)
+	// Refcount per target so Begin fires on the FIRST hovering hand and End on the LAST.
+	auto Notify = [this](const FHandGrabTarget& Target, bool bBegin)
+	{
+		if (Target.IsItem())
+		{
+			const int32 Index = FindItemSource(Target.Source.Get());
+			if (Index != INDEX_NONE && Target.Source.IsValid())
+			{
+				ItemSources[Index].Interface->OnGrabItemHover(Target.Item, bBegin);
+			}
+		}
+		else if (UPrimitiveComponent* Comp = Target.Comp.Get())
+		{
+			bBegin ? OnHoverBegin.Broadcast(Comp) : OnHoverEnd.Broadcast(Comp);
+		}
+	};
+	if (OldHover.IsValid())
 	{
 		int32& Count = HoverCounts.FindOrAdd(OldHover);
 		Count = FMath::Max(0, Count - 1);
 		if (Count == 0)
 		{
 			HoverCounts.Remove(OldHover);
-			OnHoverEnd.Broadcast(OldHover);
+			Notify(OldHover, false);
 		}
 	}
-	if (NewHover)
+	if (NewHover.IsValid())
 	{
 		int32& Count = HoverCounts.FindOrAdd(NewHover);
 		if (Count++ == 0)
 		{
-			OnHoverBegin.Broadcast(NewHover);
+			Notify(NewHover, true);
 		}
 	}
 }
@@ -965,6 +1242,13 @@ void UHandGrabSubsystem::PruneStale()
 		if (!Grabbables[i].Comp.IsValid())
 		{
 			Grabbables.RemoveAt(i);
+		}
+	}
+	for (int32 i = ItemSources.Num() - 1; i >= 0; --i)
+	{
+		if (!ItemSources[i].Object.IsValid())
+		{
+			ItemSources.RemoveAt(i);
 		}
 	}
 	for (auto It = HoverCounts.CreateIterator(); It; ++It)

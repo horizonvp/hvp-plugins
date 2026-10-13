@@ -1270,6 +1270,15 @@ DEFINE_FUNCTION(UCodeAnimationWeb::execGetTransitionEndpoint)
 	P_NATIVE_END;
 }
 
+void UCodeAnimationWeb::BeginDestroy()
+{
+	// Here rather than in the destructor: garbage collection begins destroying every unreachable
+	// object before it finishes any, so when a Web Blueprint's class goes in the same pass as its
+	// instances (a level and its Webs unloading), its variables still exist at this point.
+	Runtime.Reset();
+	Super::BeginDestroy();
+}
+
 void UCodeAnimationWeb::BeginPlay()
 {
 	Super::BeginPlay();
@@ -1487,6 +1496,11 @@ void UCodeAnimationWeb::PostCDOCompiled(const FPostCDOCompiledContext& Context)
 	{
 		SyncDefinition();
 	}
+}
+
+void UCodeAnimationWeb::ResetRuntime()
+{
+	Runtime.Reset();
 }
 
 void UCodeAnimationWeb::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)

@@ -20,7 +20,9 @@ public class HVPSystemsEditor : ModuleRules
 			"BlueprintGraph",
 			"BlueprintEditorLibrary",
 			"HVPGameflow",
-			"HVPCodeAnimation"
+			"HVPCodeAnimation",
+			// The HVP.Text automation tests.
+			"HVPText"
 		});
 	}
 }

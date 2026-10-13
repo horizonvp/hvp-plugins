@@ -6,7 +6,7 @@ between projects by hand.
 
 | Plugin | What it is | Ships in builds | Content |
 |---|---|---|---|
-| `HVPSystems` | Runtime systems: AnimatedGameflow, CodeAnimation, HandGrab. Editor module with the gameflow smoke test and the state-rename commandlet. | yes | no |
+| `HVPSystems` | Runtime systems: AnimatedGameflow, CodeAnimation, HandGrab, and HVPText (letters drawn in one instanced batch per frame, with font tools in `Tools/HVPText`; no fonts shipped). Editor module with the gameflow smoke test, the state-rename commandlet and the HVPText automation tests. | yes | no |
 | `HVPStereoButton` | Hand-pressable VR button drawn through a depth-composited stereo layer. | yes | yes |
 | `HVPEditor` | Stateless editor tools: naming conventions, graph select, palette generator, reference check, Package and Install to Headset (Android ASTC). Safe to enable or disable per project. | no | no |
 | `HVPPrimitiveData` | Named custom primitive data and per instance custom data: the Primitive Data Legend and Instance Data Legend assets, and the Set Named Primitive Data and Set Named Instance Data nodes (single, multiple, and a batch node for many instances in one call). Once a project uses a node its assets depend on the plugin, so it stays separate from `HVPEditor`. | three functions (the multiple nodes' single writes and the instance batch write) | no |
@@ -83,9 +83,11 @@ name and its module names, so gameflow, code-animation and hand-grab assets need
 Engine\Build\BatchFiles\Build.bat HVPHostEditor Win64 Development -Project=<repo>\HVPHost\HVPHost.uproject
 Engine\Binaries\Win64\UnrealEditor-Cmd.exe <repo>\HVPHost\HVPHost.uproject -run=HVPGameflowTest -nohmd
 Engine\Binaries\Win64\UnrealEditor-Cmd.exe <repo>\HVPHost\HVPHost.uproject -run=HVPReferenceCheck -nohmd
+Engine\Binaries\Win64\UnrealEditor-Cmd.exe <repo>\HVPHost\HVPHost.uproject -ExecCmds="Automation RunTests HVP;Quit" -unattended -nullrhi -nohmd -testexit="Automation Test Queue Empty"
 ```
 
-Both commandlets exit non-zero on failure. A tag is not cut until all three pass.
+Both commandlets exit non-zero on failure, and the automation run reports each test in the log. A
+tag is not cut until all of them pass.
 
 ## Releasing
 

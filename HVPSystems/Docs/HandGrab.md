@@ -149,5 +149,6 @@ tells you which threshold to move.
 - **ALibraryLoadout** (Source/LenovoAILibrary/LibraryLoadout/) — registers its draggable
   items, disables them while they ease onto seats, and decides place-vs-return on
   `OnReleased`. See [LibraryLoadout.md](LibraryLoadout.md); it's the reference consumer.
-- **ALetterLabDirector** (TextWork, Source/TextWork/LetterLab/) — the first item source:
-  up to a thousand instanced letters, grabbed by their glyph boxes.
+- **UTextGrabBridge** (HVPSystems, Source/HVPText/) — the first item source: up to a
+  thousand instanced letters of the text subsystem, grabbed by their glyph boxes. See
+  [HVPText.md](HVPText.md).

@@ -100,6 +100,36 @@ Lifecycle rules:
 Queries: `IsHeld(Comp)`, `GetHandCount()`, `IsHandPinching(i)`, `GetPinchLocation(i)`,
 `GetHeldComponent(i)`.
 
+### Many small things: item sources
+
+Registering a component per item stops scaling at a few hundred: every grabbable costs a
+collision query per hand probe per frame, and instances, particles or entries in your own
+array aren't components at all. For those, implement `IHandGrabItemSource` (C++ only) and
+register the object once:
+
+```cpp
+class AMySwarm : public AActor, public IHandGrabItemSource
+{
+    // Nearest item whose surface is within MaxDistance of Probe, skipping !IsAvailable(i).
+    virtual int32 FindGrabItem(const FVector& Probe, float MaxDistance,
+        TFunctionRef<bool(int32)> IsAvailable, float& OutDistance) const override;
+    virtual float GetGrabItemDistance(int32 Item, const FVector& Probe, FVector& OutClosest) const override;
+    virtual bool GetGrabItemPose(int32 Item, FVector& OutLocation, FQuat& OutRotation) const override;
+    virtual void SetGrabItemPose(int32 Item, const FVector& Location, const FQuat& Rotation) override;
+    // Optional: OnGrabItemGrabbed / OnGrabItemReleased / OnGrabItemHover
+};
+
+Grab->RegisterItemSource(this, Params);   // one FHandGrabbableParams for every item
+```
+
+The items get the same gesture, forgiveness (grace, hover memory, squeeze, release debounce),
+follow and rotation follow as components; only the shape and pose questions go to your source.
+The source answers "nearest item" however suits its data (a scan, a grid), so the subsystem
+never iterates the items itself. `SetGrabItemPose` is called from the subsystem's post-physics
+tick: show the pose immediately, or the item trails the hand by a frame. Call
+`ReleaseItems(this)` before renumbering items, and `UnregisterItemSource` in `EndPlay`.
+Components and item sources compete on distance, so they can share a scene.
+
 Tuning: the gesture thresholds and forgiveness timings are subsystem-level (the gesture
 belongs to the player, not to any one interaction); per-object feel lives in the
 registration params. `bDrawDebug` draws pinch points (green while pinching), the fingertip
@@ -119,3 +149,5 @@ tells you which threshold to move.
 - **ALibraryLoadout** (Source/LenovoAILibrary/LibraryLoadout/) — registers its draggable
   items, disables them while they ease onto seats, and decides place-vs-return on
   `OnReleased`. See [LibraryLoadout.md](LibraryLoadout.md); it's the reference consumer.
+- **ALetterLabDirector** (TextWork, Source/TextWork/LetterLab/) — the first item source:
+  up to a thousand instanced letters, grabbed by their glyph boxes.

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "UObject/Interface.h"
 #include "HandGrabSubsystem.generated.h"
 
 class UPrimitiveComponent;
@@ -90,6 +91,92 @@ struct FHandGrabbableParams
 	bool bFollowRotation = false;
 };
 
+UINTERFACE(MinimalAPI, meta=(CannotImplementInterfaceInBlueprint))
+class UHandGrabItemSource : public UInterface
+{
+	GENERATED_BODY()
+};
+
+/**
+ * Many grabbables that are not components: instances, particles, entries in a consumer's own
+ * array. The source owns the items' shapes and poses; the subsystem runs the same gesture,
+ * forgiveness and follow on them that it runs on registered components, and addresses each
+ * item by an index the source chooses (keep it stable while the item may be held or hovered —
+ * call ReleaseItems before reshuffling).
+ *
+ * Exists so a few thousand small things can be grabbable without a component (and a collision
+ * body) each: the source answers "nearest item to this point" however suits its data, rather
+ * than the subsystem scanning every item. Register with RegisterItemSource. C++ only.
+ */
+class HVPHANDGRAB_API IHandGrabItemSource
+{
+	GENERATED_BODY()
+
+public:
+	// The nearest item whose SURFACE lies within MaxDistance (cm) of Probe (distance 0 inside
+	// it, as for a component's collision), skipping items IsAvailable rejects (held ones).
+	// INDEX_NONE if none; OutDistance receives its distance.
+	virtual int32 FindGrabItem(const FVector& Probe, float MaxDistance,
+		TFunctionRef<bool(int32)> IsAvailable, float& OutDistance) const = 0;
+
+	// Surface distance from Probe to Item (0 inside) and the nearest surface point (Probe itself
+	// when inside). Negative if the item no longer exists.
+	virtual float GetGrabItemDistance(int32 Item, const FVector& Probe, FVector& OutClosest) const = 0;
+
+	// World pose of Item. False if it no longer exists (a held item is then let go).
+	virtual bool GetGrabItemPose(int32 Item, FVector& OutLocation, FQuat& OutRotation) const = 0;
+
+	// Called from the subsystem's tick (after TG_PostPhysics) while Item is held with bFollow:
+	// show the item at this pose THIS frame — deferring it to the next tick of the source adds a
+	// frame of lag behind the hand.
+	virtual void SetGrabItemPose(int32 Item, const FVector& Location, const FQuat& Rotation) = 0;
+
+	// The item counterparts of OnGrabbed / OnReleased / OnHoverBegin / OnHoverEnd.
+	virtual void OnGrabItemGrabbed(int32 Item, int32 HandIndex, const FVector& PinchLocation) {}
+	virtual void OnGrabItemReleased(int32 Item, int32 HandIndex, const FVector& PinchLocation) {}
+	virtual void OnGrabItemHover(int32 Item, bool bHovered) {}
+};
+
+// What a hand holds or hovers: a registered component, or one item of a registered item source.
+struct FHandGrabTarget
+{
+	TWeakObjectPtr<UPrimitiveComponent> Comp;
+	TWeakObjectPtr<UObject> Source;
+	int32 Item = INDEX_NONE;
+
+	static FHandGrabTarget OfComponent(UPrimitiveComponent* InComp)
+	{
+		FHandGrabTarget T;
+		T.Comp = InComp;
+		return T;
+	}
+
+	static FHandGrabTarget OfItem(UObject* InSource, int32 InItem)
+	{
+		FHandGrabTarget T;
+		T.Source = InSource;
+		T.Item = InItem;
+		return T;
+	}
+
+	bool IsItem() const { return Item != INDEX_NONE; }
+
+	// Still refers to something (the component, or the source, is alive).
+	bool IsValid() const { return IsItem() ? Source.IsValid() : Comp.IsValid(); }
+
+	void Reset() { *this = FHandGrabTarget(); }
+
+	bool operator==(const FHandGrabTarget& Other) const
+	{
+		return Comp == Other.Comp && Source == Other.Source && Item == Other.Item;
+	}
+
+	friend uint32 GetTypeHash(const FHandGrabTarget& T)
+	{
+		return HashCombine(HashCombine(GetTypeHash(T.Comp), GetTypeHash(T.Source)), ::GetTypeHash(T.Item));
+	}
+};
+
 // Where a hand's carry point is measured from. The live choice tracks the gesture each frame;
 // the choice in force at the moment of a grab is FROZEN for that hold (see FHandGrabHand).
 enum class EHandGrabCarry : uint8
@@ -138,8 +225,8 @@ struct FHandGrabHand
 	// it hangs.
 	EHandGrabCarry LiveCarry = EHandGrabCarry::PinchIndex;
 	EHandGrabCarry HeldCarry = EHandGrabCarry::PinchIndex;
-	TWeakObjectPtr<UPrimitiveComponent> Held;
-	TWeakObjectPtr<UPrimitiveComponent> Hovered;
+	FHandGrabTarget Held;
+	FHandGrabTarget Hovered;
 
 	// Live hand-size factor (palm length / reference palm length) the cm thresholds scale by.
 	float SizeScale = 1.f;
@@ -164,9 +251,9 @@ struct FHandGrabHand
 	// Seconds the raw gesture has read OPEN while bPinching is still latched (release debounce).
 	float TimeOpen = 0.f;
 
-	// The last component this hand hovered while open, and how long ago — a grab that closes
+	// The last grabbable this hand hovered while open, and how long ago — a grab that closes
 	// a moment after the hand drifted (closing the fingers moves the grab point) still takes it.
-	TWeakObjectPtr<UPrimitiveComponent> RecentHover;
+	FHandGrabTarget RecentHover;
 	float TimeSinceRecentHover = TNumericLimits<float>::Max();
 
 	// Closed-but-empty "squeeze" re-arm: a hand that arrives already half-closed (so the close
@@ -183,6 +270,15 @@ struct FHandGrabHand
 struct FHandGrabbable
 {
 	TWeakObjectPtr<UPrimitiveComponent> Comp;
+	FHandGrabbableParams Params;
+	bool bEnabled = true;
+};
+
+// One registered item source; its Params apply to every one of its items.
+struct FHandGrabItemSourceEntry
+{
+	TWeakObjectPtr<UObject> Object;
+	IHandGrabItemSource* Interface = nullptr;  // Object's implementation; valid while Object is
 	FHandGrabbableParams Params;
 	bool bEnabled = true;
 };
@@ -224,6 +320,10 @@ struct FHandGrabbable
  * drop) is the consumer's business. OnHoverBegin/End bracket the open-hand-in-reach
  * affordance. Each hand holds at most one component; a held component can't be taken by
  * the other hand.
+ *
+ * Grabbables that are not components (instances, particles) come from an IHandGrabItemSource
+ * registered with RegisterItemSource: the same gesture, forgiveness and follow, with the
+ * source's own nearest-item search and pose read/write in place of collision and transforms.
  *
  * Game worlds only; ticks itself (no consumer ticking required).
  */
@@ -392,6 +492,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Hand Grab")
 	void ForceRelease(UPrimitiveComponent* Component);
 
+	// Make every item of Source grabbable (see IHandGrabItemSource), with one set of params for
+	// all of them. Source must implement IHandGrabItemSource. Re-registering updates the params.
+	void RegisterItemSource(UObject* Source, const FHandGrabbableParams& Params);
+
+	// Remove Source; any of its items held are let go silently (as UnregisterGrabbable).
+	void UnregisterItemSource(UObject* Source);
+
+	// Gate every item of Source without unregistering it (does not release held ones).
+	void SetItemSourceEnabled(UObject* Source, bool bEnabled);
+
+	// Let go of (and stop hovering) every item of Source WITHOUT broadcasting — for a source
+	// about to rebuild or renumber its items.
+	void ReleaseItems(UObject* Source);
+
+	// True while any hand holds item Item of Source.
+	bool IsItemHeld(const UObject* Source, int32 Item) const;
+
 	// --- Queries ---
 
 	UFUNCTION(BlueprintPure, Category="Hand Grab")
@@ -448,24 +565,26 @@ private:
 	// public GetHandRotation and the rotation follow so both read the identical source.
 	static bool GetHandQuat(const FHandGrabHand& Hand, FQuat& OutQuat);
 
-	// Nearest enabled, unheld grabbable within its own GrabRadius (times ReachScale) of WorldPos;
-	// INDEX_NONE if none. OutDistance receives its distance.
-	int32 FindGrabCandidate(const FVector& WorldPos, float ReachScale = 1.f) const;
-	int32 FindGrabCandidate(const FVector& WorldPos, float ReachScale, float& OutDistance) const;
+	// Nearest enabled, unheld grabbable (component or item) within its own GrabRadius (times
+	// ReachScale) of WorldPos; an unset target if none. OutDistance receives its distance.
+	FHandGrabTarget FindGrabCandidate(const FVector& WorldPos, float ReachScale, float& OutDistance) const;
 
 	// Nearest candidate across all of a hand's probe points (grab point, fingertips, palm).
-	int32 FindGrabCandidateForHand(const FHandGrabHand& Hand) const;
+	FHandGrabTarget FindGrabCandidateForHand(const FHandGrabHand& Hand) const;
 
 	// Takes Candidate into Hand: sets Held and the grab anchor, broadcasts OnGrabbed.
-	void GrabCandidate(FHandGrabHand& Hand, int32 HandIndex, int32 Candidate, const TCHAR* Reason);
+	void GrabCandidate(FHandGrabHand& Hand, int32 HandIndex, const FHandGrabTarget& Candidate, const TCHAR* Reason);
+
+	// Lets go of whatever Hand holds and broadcasts the release.
+	void ReleaseHeld(FHandGrabHand& Hand, int32 HandIndex);
 
 	// Single-grab / one-item-per-physical-hand gates.
 	bool CanHandGrab(const FHandGrabHand& Hand) const;
 
 	bool ShouldLog() const;
 
-	// True if any hand currently holds Comp.
-	bool IsHeldByAnyHand(const UPrimitiveComponent* Comp) const;
+	// True if any hand currently holds Target.
+	bool IsHeldByAnyHand(const FHandGrabTarget& Target) const;
 
 	// True if any hand holds anything (the bAllowMultiGrab gate).
 	bool IsAnythingHeld() const;
@@ -473,16 +592,43 @@ private:
 	// Index into Grabbables for Comp, or INDEX_NONE.
 	int32 FindGrabbable(const UPrimitiveComponent* Comp) const;
 
-	// Hover-refcount transitions: called when a hand's hovered component changes.
-	void SetHandHover(FHandGrabHand& Hand, UPrimitiveComponent* NewHover);
+	// Index into ItemSources for Source, or INDEX_NONE.
+	int32 FindItemSource(const UObject* Source) const;
+
+	// --- Component/item dispatch: everything the grab logic needs to know about a target ---
+
+	// The target's params, or null if it is no longer registered. bOutEnabled: its enabled gate.
+	const FHandGrabbableParams* GetTargetParams(const FHandGrabTarget& Target, bool* bOutEnabled = nullptr) const;
+
+	// Surface distance from Probe (0 inside) and the nearest surface point; negative when the
+	// target has no usable shape (a component without collision; OutClosest is then Probe).
+	float GetTargetSurfaceDistance(const FHandGrabTarget& Target, const FVector& Probe, FVector& OutClosest) const;
+
+	// Distance used for reach tests: the surface distance, else (component without collision)
+	// the distance to its bounds centre.
+	float GetTargetReachDistance(const FHandGrabTarget& Target, const FVector& Probe) const;
+
+	bool GetTargetPose(const FHandGrabTarget& Target, FVector& OutLocation, FQuat& OutRotation) const;
+
+	// Moves the target; bRotate also applies Rotation (components keep their own otherwise).
+	void SetTargetPose(const FHandGrabTarget& Target, const FVector& Location, const FQuat& Rotation, bool bRotate);
+
+	FString GetTargetName(const FHandGrabTarget& Target) const;
+
+	void BroadcastGrabbed(const FHandGrabTarget& Target, int32 HandIndex, const FVector& Pinch);
+	void BroadcastReleased(const FHandGrabTarget& Target, int32 HandIndex, const FVector& Pinch);
+
+	// Hover-refcount transitions: called when a hand's hovered target changes.
+	void SetHandHover(FHandGrabHand& Hand, const FHandGrabTarget& NewHover);
 
 	// Drops stale (destroyed-component) grabbables and fixes hover counts.
 	void PruneStale();
 
 	TArray<FHandGrabbable> Grabbables;
+	TArray<FHandGrabItemSourceEntry> ItemSources;
 	TArray<FHandGrabHand> Hands;
 	TWeakObjectPtr<APawn> CachedPawn;
 
-	// Per-component count of hands currently hovering it, for the begin/end edge events.
-	TMap<TWeakObjectPtr<UPrimitiveComponent>, int32> HoverCounts;
+	// Per-target count of hands currently hovering it, for the begin/end edge events.
+	TMap<FHandGrabTarget, int32> HoverCounts;
 };

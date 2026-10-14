@@ -227,6 +227,9 @@ FTextGroupState& UTextRenderSubsystem::FindOrAddGroup(FName Group)
 	{
 		return *Found;
 	}
+	// Every letter belongs to a group, so the first group is when drawing starts: the pool actor's tick
+	// is what flushes, and a world without text never gets one.
+	EnsurePoolActor();
 	FTextGroupState& Added = Groups.Add(Group);
 	Added.Style = DefaultStyle();
 	return Added;

@@ -120,8 +120,13 @@ bool FHVPTextBatchingTest::RunTest(const FString& Parameters)
 	ULetterFontAsset* Font = MakeFont(TEXT("AB"));
 	ULetterFontAsset* Other = MakeFont(TEXT("A"));
 
+	// The pool actor's tick is what flushes: spawned by the first group, not before, and not by a
+	// FlushChanges call.
+	TestNull(TEXT("A world without text has no pool actor"), SharedPoolRoot(Test.World));
+
 	// Two groups, one font, different sizes: one component per glyph, shared.
 	Text->SetGroupStyle(TEXT("One"), Style(Font, 8.f));
+	TestNotNull(TEXT("The first group spawned the pool actor"), SharedPoolRoot(Test.World));
 	TestEqual(TEXT("Spaces only move the pen"), Text->SetGroupText(TEXT("One"), TEXT("AB A"), FVector::ZeroVector), 3);
 	Text->SetGroupStyle(TEXT("Two"), Style(Font, 20.f));
 	Text->SetGroupText(TEXT("Two"), TEXT("BA"), FVector(0.f, 100.f, 0.f));

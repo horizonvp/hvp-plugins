@@ -73,6 +73,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Text Group")
 	void SetCustomDataVector(int32 DataIndex, FVector Value);
 
+	// Letter transforms relative to this component, by index in the group. The subsystem's group
+	// functions take and give world transforms.
+
+	UFUNCTION(BlueprintCallable, Category = "Text Group|Letters")
+	void SetLetterRelativeTransform(int32 Index, const FTransform& Transform);
+
+	/** Sets Transforms.Num() letters starting at FirstIndex, in one call. */
+	UFUNCTION(BlueprintCallable, Category = "Text Group|Letters")
+	void SetLetterRelativeTransforms(const TArray<FTransform>& Transforms, int32 FirstIndex = 0);
+
+	UFUNCTION(BlueprintPure, Category = "Text Group|Letters")
+	FTransform GetLetterRelativeTransform(int32 Index) const;
+
+	/** Every letter's, in group order. */
+	UFUNCTION(BlueprintPure, Category = "Text Group|Letters")
+	TArray<FTransform> GetLetterRelativeTransforms() const;
+
 	UFUNCTION(BlueprintPure, Category = "Text Group")
 	UTextRenderSubsystem* GetTextSubsystem() const;
 

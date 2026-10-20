@@ -205,21 +205,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Text|Groups")
 	int32 GetGroupLetterIndex(FName Group, int32 Index) const;
 
-	/** Group-frame relative. */
+	/** World space: converted through the group's frame as it is now. */
 	UFUNCTION(BlueprintCallable, Category = "Text|Groups")
-	void SetGroupLetterTransform(FName Group, int32 Index, const FTransform& Transform);
+	void SetGroupLetterWorldTransform(FName Group, int32 Index, const FTransform& Transform);
 
-	/** Sets the frames of Transforms.Num() group letters starting at FirstIndex, group-frame relative.
-	    The cheapest way to move many letters from Blueprint: one call, not one per letter. */
+	/** Sets the world transforms of Transforms.Num() group letters starting at FirstIndex. The
+	    cheapest way to move many letters from Blueprint: one call, not one per letter. */
 	UFUNCTION(BlueprintCallable, Category = "Text|Groups")
-	void SetGroupLetterTransforms(FName Group, const TArray<FTransform>& Transforms, int32 FirstIndex = 0);
+	void SetGroupLetterWorldTransforms(FName Group, const TArray<FTransform>& Transforms, int32 FirstIndex = 0);
 
+	/** World space, through the group's frame as it is now. */
 	UFUNCTION(BlueprintPure, Category = "Text|Groups")
-	FTransform GetGroupLetterTransform(FName Group, int32 Index) const;
+	FTransform GetGroupLetterWorldTransform(FName Group, int32 Index) const;
 
-	/** Every group letter's frame, in group order. */
+	/** Every group letter's world transform, in group order. */
 	UFUNCTION(BlueprintPure, Category = "Text|Groups")
-	TArray<FTransform> GetGroupLetterTransforms(FName Group) const;
+	TArray<FTransform> GetGroupLetterWorldTransforms(FName Group) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Text|Groups")
 	void SetGroupLetterVisible(FName Group, int32 Index, bool bNewVisible);

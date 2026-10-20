@@ -101,7 +101,7 @@ On the subsystem (`Get TextRenderSubsystem`), under **Text**:
 |---|---|
 | Group style | `Set Group Style`, `Set Group Font`, `Set Group Technique`, `Set Group Cap Height`, `Get Group Style`, `Get Group Font` |
 | Group frame | `Set Group Frame (Group, Frame, Own Instances)`, `Get Group Frame`, `Get Group Frame Transform` |
-| Group letters | `Add Group Letter(s)`, `Set Group Letters`, `Remove Group Letter`, `Remove Group`, `Has Group`, `Get Group Names`, `Get Group Letter Count`, `Get Group Letter(s)`, `Get Group Letter Index` / `Indices`, `Set` / `Get Group Letter Transform(s)`, `Set Group Letter Visible`, `Set Group Visible`, `Set Group Letter Character` |
+| Group letters | `Add Group Letter(s)`, `Set Group Letters`, `Remove Group Letter`, `Remove Group`, `Has Group`, `Get Group Names`, `Get Group Letter Count`, `Get Group Letter(s)`, `Get Group Letter Index` / `Indices`, `Set` / `Get Group Letter World Transform(s)`, `Set Group Letter Visible`, `Set Group Visible`, `Set Group Letter Character` |
 | Custom data | Scalar, vector and masked writes for a group letter or a whole group; scalar, vector, run and masked writes for a letter by index; getters |
 | Layout | `Set Group Text`, `Measure Text`, `Get Letter Spacing` |
 | Letters by index | `Is Valid Letter`, `Get Letter Count`, `Get Letter Group`, `Get Letter`, `Remove Letter`, `Set Letter Character`, `Set` / `Get Letter Transform`, `Set` / `Get Letter World Transform`, `Set Letter Location`, `Set Letter Visible`, `Get Letter Bounds` |
@@ -119,7 +119,7 @@ hand; `Measure Text` gives a block's size.
 
 **What setting data costs** is the caller's own loop. From C++ it is negligible. From Blueprint,
 a few nodes per letter for hundreds of letters every frame adds up to milliseconds on Quest: move
-many letters with one `Set Group Letter Transforms` call, or from C++.
+many letters with one `Set Group Letter World Transforms` call, or from C++.
 
 ## The Text Group component
 
@@ -127,6 +127,8 @@ many letters with one `Set Group Letter Transforms` call, or from C++.
 centred on the component and facing its +X), its layout, and **Own Instances** (off by default).
 The group is the component's frame, made at Begin Play and removed at End Play; `Get Group Name`
 gives the name for everything else. Its Group Name defaults to `<Owner>.<Component>`.
+`Set` / `Get Letter Relative Transform(s)` move its letters relative to the component, by index in the
+group; the subsystem's group functions work in world space.
 
 ## Grabbing letters
 

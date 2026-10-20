@@ -94,3 +94,51 @@ void UTextGroupComponent::SetCustomDataVector(int32 DataIndex, FVector Value)
 		Subsystem->SetGroupCustomDataVector(ActiveName, DataIndex, Value);
 	}
 }
+
+// Relative to this component whatever the group's frame is: through world space and back.
+
+void UTextGroupComponent::SetLetterRelativeTransform(int32 Index, const FTransform& Transform)
+{
+	if (UTextRenderSubsystem* Subsystem = GetTextSubsystem(); Subsystem && !ActiveName.IsNone())
+	{
+		Subsystem->SetGroupLetterWorldTransform(ActiveName, Index, Transform * GetComponentTransform());
+	}
+}
+
+void UTextGroupComponent::SetLetterRelativeTransforms(const TArray<FTransform>& Transforms, int32 FirstIndex)
+{
+	if (UTextRenderSubsystem* Subsystem = GetTextSubsystem(); Subsystem && !ActiveName.IsNone())
+	{
+		const FTransform& Component = GetComponentTransform();
+		TArray<FTransform> World;
+		World.Reserve(Transforms.Num());
+		for (const FTransform& Transform : Transforms)
+		{
+			World.Add(Transform * Component);
+		}
+		Subsystem->SetGroupLetterWorldTransforms(ActiveName, World, FirstIndex);
+	}
+}
+
+FTransform UTextGroupComponent::GetLetterRelativeTransform(int32 Index) const
+{
+	const UTextRenderSubsystem* Subsystem = GetTextSubsystem();
+	return Subsystem && !ActiveName.IsNone()
+		? Subsystem->GetGroupLetterWorldTransform(ActiveName, Index).GetRelativeTransform(GetComponentTransform())
+		: FTransform::Identity;
+}
+
+TArray<FTransform> UTextGroupComponent::GetLetterRelativeTransforms() const
+{
+	TArray<FTransform> Result;
+	if (const UTextRenderSubsystem* Subsystem = GetTextSubsystem(); Subsystem && !ActiveName.IsNone())
+	{
+		const FTransform& Component = GetComponentTransform();
+		Result = Subsystem->GetGroupLetterWorldTransforms(ActiveName);
+		for (FTransform& Transform : Result)
+		{
+			Transform = Transform.GetRelativeTransform(Component);
+		}
+	}
+	return Result;
+}

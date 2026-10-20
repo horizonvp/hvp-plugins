@@ -6,6 +6,7 @@
 #include "LetterFontAsset.h"
 #include "Materials/Material.h"
 #include "Misc/AutomationTest.h"
+#include "TextGroupComponent.h"
 #include "TextRenderSubsystem.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -229,6 +230,27 @@ bool FHVPTextFramesTest::RunTest(const FString& Parameters)
 	const int32 OwnLetter = Text->GetGroupLetterIndex(TEXT("Own"), 0);
 	Text->SetLetterWorldTransform(OwnLetter, FTransform(FVector(10.f, 20.f, 30.f)));
 	TestTrue(TEXT("SetLetterWorldTransform lands where asked"), Text->GetLetterWorldTransform(OwnLetter).GetLocation().Equals(FVector(10.f, 20.f, 30.f), 0.01));
+
+	// A Text Group component: the subsystem's group functions are world space, the component's are
+	// relative to it.
+	AActor* Holder = Test.World->SpawnActor<AActor>();
+	UTextGroupComponent* Component = NewObject<UTextGroupComponent>(Holder, TEXT("Words"));
+	Holder->SetRootComponent(Component);
+	Component->Style = Style(Font);
+	Component->Text = TEXT("AB");
+	Holder->SetActorLocationAndRotation(FVector(0.f, 0.f, 200.f), FRotator(0.f, 90.f, 0.f));
+	Component->RegisterComponent();
+	Holder->DispatchBeginPlay();  // the test world has no game mode to begin new actors
+	const FName Words = Component->GetGroupName();
+	Component->SetLetterRelativeTransform(0, FTransform(FVector(0.f, 10.f, 0.f)));
+	TestTrue(TEXT("A component-relative letter reads back relative"), Component->GetLetterRelativeTransform(0).GetLocation().Equals(FVector(0.f, 10.f, 0.f), 0.01));
+	TestTrue(TEXT("...and is in the world through the component (yawed 90: +Y becomes -X)"), Text->GetGroupLetterWorldTransform(Words, 0).GetLocation().Equals(FVector(-10.f, 0.f, 200.f), 0.01));
+	Text->SetGroupLetterWorldTransforms(Words, { FTransform(FVector(0.f, 0.f, 250.f)) }, 1);
+	const TArray<FTransform> Relative = Component->GetLetterRelativeTransforms();
+	if (TestEqual(TEXT("The component's group has its two letters"), Relative.Num(), 2))
+	{
+		TestTrue(TEXT("A world-space group set reads back relative to the component"), Relative[1].GetLocation().Equals(FVector(0.f, 0.f, 50.f), 0.01));
+	}
 
 	Font->RemoveFromRoot();
 	return true;

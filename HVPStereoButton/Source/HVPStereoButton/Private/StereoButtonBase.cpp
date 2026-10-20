@@ -1,6 +1,7 @@
 #include "StereoButtonBase.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/BoxComponent.h"
 #include "Components/Image.h"
@@ -531,7 +532,21 @@ void AStereoButtonBase::PushLabel()
 	{
 		IStereoButtonWidgetInterface::Execute_SetButtonLabel(W, LabelText);
 	}
-	if (UTextBlock* Text = Cast<UTextBlock>(W->GetWidgetFromName(LabelTextWidgetName)))
+	UTextBlock* Text = Cast<UTextBlock>(W->GetWidgetFromName(LabelTextWidgetName));
+	// Faces that neither implement the interface nor name a TextBlock "LabelText" (the stock
+	// StereoButtonFace_WBP has one unnamed TextBlock reading "START") would otherwise never
+	// show LabelText at all - fall back to the face's first TextBlock.
+	if (!Text && !W->Implements<UStereoButtonWidgetInterface>() && W->WidgetTree)
+	{
+		W->WidgetTree->ForEachWidget([&Text](UWidget* Child)
+		{
+			if (!Text)
+			{
+				Text = Cast<UTextBlock>(Child);
+			}
+		});
+	}
+	if (Text)
 	{
 		Text->SetText(LabelText);
 	}

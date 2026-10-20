@@ -24,3 +24,6 @@ Build/
 # Misc
 *.log
 *.pyc
+
+# HVPText's font tools run this; committed on purpose, past any project's *.exe ignore (Docs/HVPText.md)
+!HVPSystems/Tools/HVPText/bin/msdf-atlas-gen/msdf-atlas-gen.exe

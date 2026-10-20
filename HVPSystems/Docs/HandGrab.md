@@ -132,7 +132,12 @@ Components and item sources compete on distance, so they can share a scene.
 
 Tuning: the gesture thresholds and forgiveness timings are subsystem-level (the gesture
 belongs to the player, not to any one interaction); per-object feel lives in the
-registration params. `bDrawDebug` draws pinch points (green while pinching), the fingertip
+registration params. That includes how deliberate a grab must be: `MaxPinchDistance` takes an
+item only with a pinch at least that tight (reference-hand cm; 0 = any pinch that closes the
+gesture), and `bAllowFistGrab` off keeps fists and controller grip squeezes from taking it. A
+hand that closed in reach but too loose for the item grabs it the moment the pinch tightens
+enough (logged as `tighten`), with no further squeeze. Small things want both: a 3 cm close
+grabs them from a half-formed pinch. `bDrawDebug` draws pinch points (green while pinching), the fingertip
 and palm probes (cyan = pinch closed, orange = fist closed) and every grabbable's radius
 (dark gray enabled, dark red disabled).
 

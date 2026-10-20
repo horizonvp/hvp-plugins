@@ -227,6 +227,9 @@ FTextGroupState& UTextRenderSubsystem::FindOrAddGroup(FName Group)
 	{
 		return *Found;
 	}
+	// Every letter belongs to a group, so the first group is when drawing starts: the pool actor's tick
+	// is what flushes, and a world without text never gets one.
+	EnsurePoolActor();
 	FTextGroupState& Added = Groups.Add(Group);
 	Added.Style = DefaultStyle();
 	return Added;
@@ -505,42 +508,44 @@ int32 UTextRenderSubsystem::GetGroupLetterIndex(FName Group, int32 Index) const
 	return GroupSlot(Group, Index);
 }
 
-void UTextRenderSubsystem::SetGroupLetterTransform(FName Group, int32 Index, const FTransform& Transform)
+void UTextRenderSubsystem::SetGroupLetterWorldTransform(FName Group, int32 Index, const FTransform& Transform)
 {
-	SetLetterTransform(GroupSlot(Group, Index), Transform);
+	SetLetterWorldTransform(GroupSlot(Group, Index), Transform);
 }
 
-void UTextRenderSubsystem::SetGroupLetterTransforms(FName Group, const TArray<FTransform>& Transforms, int32 FirstIndex)
+void UTextRenderSubsystem::SetGroupLetterWorldTransforms(FName Group, const TArray<FTransform>& Transforms, int32 FirstIndex)
 {
 	const FTextGroupState* Found = Groups.Find(Group);
 	if (!Found)
 	{
 		return;
 	}
+	const FTransform Frame = FrameTransform(*Found);
 	const int32 First = FMath::Max(FirstIndex, 0);
 	const int32 Num = FMath::Min(Transforms.Num(), Found->Letters.Num() - First);
 	for (int32 Index = 0; Index < Num; ++Index)
 	{
 		const int32 Slot = Found->Letters[First + Index];
-		Letters[Slot].Transform = Transforms[Index];
+		Letters[Slot].Transform = Transforms[Index].GetRelativeTransform(Frame);
 		MarkTransformDirty(Slot);
 	}
 }
 
-FTransform UTextRenderSubsystem::GetGroupLetterTransform(FName Group, int32 Index) const
+FTransform UTextRenderSubsystem::GetGroupLetterWorldTransform(FName Group, int32 Index) const
 {
-	return GetLetterTransform(GroupSlot(Group, Index));
+	return GetLetterWorldTransform(GroupSlot(Group, Index));
 }
 
-TArray<FTransform> UTextRenderSubsystem::GetGroupLetterTransforms(FName Group) const
+TArray<FTransform> UTextRenderSubsystem::GetGroupLetterWorldTransforms(FName Group) const
 {
 	TArray<FTransform> Result;
 	if (const FTextGroupState* Found = Groups.Find(Group))
 	{
+		const FTransform Frame = FrameTransform(*Found);
 		Result.Reserve(Found->Letters.Num());
 		for (int32 Slot : Found->Letters)
 		{
-			Result.Add(Letters[Slot].Transform);
+			Result.Add(Letters[Slot].Transform * Frame);
 		}
 	}
 	return Result;

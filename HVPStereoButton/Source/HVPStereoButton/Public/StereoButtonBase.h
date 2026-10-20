@@ -214,6 +214,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stereo Button|Motion")
 	bool bBlockPressWhenHidden = true;
 
+	/**
+	 * Draw the face into its render target only when it changes (label, colour, layout, or a
+	 * RequestFaceRedraw), instead of every frame. Applies only to a STATIC face: one that does not
+	 * implement StereoButtonWidgetInterface and has no "FaceImage" material - those take parallax /
+	 * press data every tick and keep redrawing every frame regardless of this flag.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stereo Button|Face")
+	bool bRedrawStaticFaceOnlyOnChange = true;
+
 	/** The first button in this group to press locks every button in it (itself included) until UnlockExclusiveGroup. None = off. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stereo Button|Motion")
 	FName ExclusiveGroup = NAME_None;
@@ -295,6 +304,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Stereo Button")
 	UUserWidget* GetFaceWidget() const;
 
+	/** Redraw the face next frame. Call after changing the face widget's content directly. */
+	UFUNCTION(BlueprintCallable, Category="Stereo Button")
+	void RequestFaceRedraw();
+
 	/** Face size in centimetres. */
 	UFUNCTION(BlueprintPure, Category="Stereo Button")
 	FVector2D GetFaceSizeCm() const;
@@ -363,4 +376,9 @@ private:
 	bool bStereoLayerLive = false;
 	bool bWarnedNoHiddenMaterial = false;
 	bool bLastPressed = false;
+	/** Whether the redraw mode has been chosen for the current face widget (it needs the widget to exist). */
+	bool bFaceRedrawResolved = false;
+
+	/** Once the face widget exists: manual redraw for a static face, every frame for a live one. */
+	void ResolveFaceRedrawMode();
 };

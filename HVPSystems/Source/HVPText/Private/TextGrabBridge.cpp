@@ -141,6 +141,23 @@ void UTextGrabBridge::ClearGrabbables()
 	Bind(false);
 }
 
+void UTextGrabBridge::RemoveGrabbable(int32 Letter)
+{
+	UHandGrabSubsystem* Grab = GetGrab();
+	for (int32 Item = 0; Item < Grabbables.Num(); ++Item)
+	{
+		if (Grabbables[Item] == Letter)
+		{
+			// Retired like a removed letter, so no other item is renumbered.
+			if (Grab)
+			{
+				Grab->ForceReleaseItem(this, Item);
+			}
+			Grabbables[Item] = INDEX_NONE;
+		}
+	}
+}
+
 void UTextGrabBridge::HandleLettersRebuilt()
 {
 	// A font, size or character changed: the boxes did too.

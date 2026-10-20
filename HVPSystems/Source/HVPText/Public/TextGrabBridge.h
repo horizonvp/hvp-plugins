@@ -59,6 +59,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Text Grab")
 	void SubmitGroups(const TArray<FName>& Groups);
 
+	/** Takes one letter out of the submission without renumbering the rest, so other held letters
+	    stay held. A hand holding it lets go silently (no OnLetterReleased: the caller is taking the
+	    letter over, e.g. snapping it into place). */
+	UFUNCTION(BlueprintCallable, Category = "Text Grab")
+	void RemoveGrabbable(int32 Letter);
+
 	/** Releases anything held and makes nothing grabbable. */
 	UFUNCTION(BlueprintCallable, Category = "Text Grab")
 	void ClearGrabbables();

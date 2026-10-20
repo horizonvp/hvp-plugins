@@ -21,8 +21,16 @@ public class HVPSystemsEditor : ModuleRules
 			"BlueprintEditorLibrary",
 			"HVPGameflow",
 			"HVPCodeAnimation",
-			// The HVP.Text automation tests.
-			"HVPText"
+			// The HVP.Text automation tests, and Make HVPText Font.
+			"HVPText",
+			// Make HVPText Font: a Font Face context menu entry, its dialog, and the font tools it runs.
+			"ContentBrowser",
+			"Json",
+			"Projects",
+			"PythonScriptPlugin",
+			"Slate",
+			"SlateCore",
+			"ToolMenus"
 		});
 	}
 }

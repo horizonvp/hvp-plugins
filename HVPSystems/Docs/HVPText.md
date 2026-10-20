@@ -12,20 +12,35 @@ TTFs in the project.
 
 ## Setting it up in a project
 
-1. **Make the fonts.** Put TTFs under `Art/Fonts` (any depth, one file per weight, named by the
-   font id: `Cinzel-700.ttf`). Then, from the project root, with the tools' Python requirements
-   installed (`pip install -r Plugins/HVP/HVPSystems/Tools/HVPText/requirements.txt`):
+1. **Make the fonts.** From the editor: right-click a **Font Face** in the Content Browser >
+   **Make HVPText Font...**. The dialog asks for:
+
+   | Field | Default |
+   |---|---|
+   | Font id | `<Family>-<weight>`: the family from the asset name (`Gotham_Medium_FF`), the weight from the font's OS/2 table (500) |
+   | Folder | `<the font face's folder>/<Family>/<id>` |
+   | Materials folder | Where the project's Glyph Mesh Material is, else `/Game/HVPText/Materials`. The two materials are made only if missing, so edits to them survive |
+   | As MSDF, As meshes | Both |
+
+   Make writes the font face's data to `Saved/HVPText/<id>`, runs `Tools/HVPText/make_font.py` (the
+   three scripts below, in the editor's own Python) and fills in any of the settings in step 2 that
+   are still empty. The tools' Python packages are this plugin's `PythonRequirements`, which the
+   editor installs at startup (Windows; it needs network access once).
+
+   By hand, for many fonts at once: put TTFs under `Art/Fonts` (any depth, one file per weight,
+   named by the font id: `Cinzel-700.ttf`). Then, from the project root, with the tools' Python
+   requirements installed (`pip install -r Plugins/HVP/HVPSystems/Tools/HVPText/requirements.txt`):
 
    ```
-   python Plugins/HVP/HVPSystems/Tools/HVPText/build_fonts.py
+   python Plugins/HVP/HVPSystems/Tools/HVPText/build_fonts.py                (--metrics-only: no MSDF)
    python Plugins/HVP/HVPSystems/Tools/HVPText/build_glyph_meshes.py      (optional: glyph meshes)
    UnrealEditor-Cmd <Project>.uproject -run=pythonscript -nohmd -script="Plugins/HVP/HVPSystems/Tools/HVPText/import_fonts.py --fonts-folder=/Game/<Where>/Fonts --materials-folder=/Game/<Where>/Materials"
    ```
 
-   `build_fonts.py` needs **msdf-atlas-gen** v1.4 (MIT, Viktor Chlumsky). It is not committed: put
-   it in `Tools/HVPText/bin/` from its [releases](https://github.com/Chlumsky/msdf-atlas-gen/releases),
-   set `MSDF_ATLAS_GEN`, or pass `--msdf`. Every script takes `--fonts`, `--out` (or the importer's
-   `--generated`) and `--only <Font> ...`; their headers list the rest.
+   `build_fonts.py` uses **msdf-atlas-gen** v1.4 (MIT, Viktor Chlumsky), committed for Windows in
+   `Tools/HVPText/bin/msdf-atlas-gen/` with its licence; `MSDF_ATLAS_GEN` or `--msdf` picks another.
+   Every script takes `--fonts`, `--out` (or the importer's `--generated`) and `--only <Font> ...`;
+   their headers list the rest.
 
 2. **Point the settings at them.** Project Settings > Plugins > **HVP Text**:
 
@@ -101,7 +116,7 @@ On the subsystem (`Get TextRenderSubsystem`), under **Text**:
 |---|---|
 | Group style | `Set Group Style`, `Set Group Font`, `Set Group Technique`, `Set Group Cap Height`, `Get Group Style`, `Get Group Font` |
 | Group frame | `Set Group Frame (Group, Frame, Own Instances)`, `Get Group Frame`, `Get Group Frame Transform` |
-| Group letters | `Add Group Letter(s)`, `Set Group Letters`, `Remove Group Letter`, `Remove Group`, `Has Group`, `Get Group Names`, `Get Group Letter Count`, `Get Group Letter(s)`, `Get Group Letter Index` / `Indices`, `Set` / `Get Group Letter Transform(s)`, `Set Group Letter Visible`, `Set Group Visible`, `Set Group Letter Character` |
+| Group letters | `Add Group Letter(s)`, `Set Group Letters`, `Remove Group Letter`, `Remove Group`, `Has Group`, `Get Group Names`, `Get Group Letter Count`, `Get Group Letter(s)`, `Get Group Letter Index` / `Indices`, `Set` / `Get Group Letter World Transform(s)`, `Set Group Letter Visible`, `Set Group Visible`, `Set Group Letter Character` |
 | Custom data | Scalar, vector and masked writes for a group letter or a whole group; scalar, vector, run and masked writes for a letter by index; getters |
 | Layout | `Set Group Text`, `Measure Text`, `Get Letter Spacing` |
 | Letters by index | `Is Valid Letter`, `Get Letter Count`, `Get Letter Group`, `Get Letter`, `Remove Letter`, `Set Letter Character`, `Set` / `Get Letter Transform`, `Set` / `Get Letter World Transform`, `Set Letter Location`, `Set Letter Visible`, `Get Letter Bounds` |
@@ -119,7 +134,7 @@ hand; `Measure Text` gives a block's size.
 
 **What setting data costs** is the caller's own loop. From C++ it is negligible. From Blueprint,
 a few nodes per letter for hundreds of letters every frame adds up to milliseconds on Quest: move
-many letters with one `Set Group Letter Transforms` call, or from C++.
+many letters with one `Set Group Letter World Transforms` call, or from C++.
 
 ## The Text Group component
 
@@ -127,6 +142,8 @@ many letters with one `Set Group Letter Transforms` call, or from C++.
 centred on the component and facing its +X), its layout, and **Own Instances** (off by default).
 The group is the component's frame, made at Begin Play and removed at End Play; `Get Group Name`
 gives the name for everything else. Its Group Name defaults to `<Owner>.<Component>`.
+`Set` / `Get Letter Relative Transform(s)` move its letters relative to the component, by index in the
+group; the subsystem's group functions work in world space.
 
 ## Grabbing letters
 

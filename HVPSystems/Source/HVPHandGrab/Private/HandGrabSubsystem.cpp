@@ -62,6 +62,31 @@ namespace
 		return !Tip.IsNone() ? Tip : (!Null.IsNone() ? Null : Last);
 	}
 
+	// A digit's tip: its marker bone (*digit*tip* / *digit*null*) if the mesh has one; else its last
+	// three joints, so the tip can be estimated. Some meshes (one Meta right hand among them) ship
+	// with joints only, and the last joint sits a phalanx short of the tip: measured from it, a
+	// touching thumb and index read 2-3 cm apart.
+	FHandGrabDigit FindDigit(const USkinnedMeshComponent* Mesh, const TCHAR* Digit, float DistalRatio)
+	{
+		FHandGrabDigit Result;
+		const FName Last = FindTipBone(Mesh, Digit);
+		if (Last.IsNone())
+		{
+			return Result;
+		}
+		const FString Name = Last.ToString().ToLower();
+		if (Name.Contains(TEXT("tip")) || Name.Contains(TEXT("null")))
+		{
+			Result.Tip = Last;
+			return Result;
+		}
+		Result.Joint3 = Last;
+		Result.Joint2 = Mesh->GetParentBone(Last);
+		Result.Joint1 = Result.Joint2.IsNone() ? NAME_None : Mesh->GetParentBone(Result.Joint2);
+		Result.DistalRatio = DistalRatio;
+		return Result;
+	}
+
 	// First bone whose lower-cased name contains every fragment; NAME_None if none.
 	FName FindBoneContaining(const USkinnedMeshComponent* Mesh,
 		std::initializer_list<const TCHAR*> Fragments)
@@ -238,6 +263,17 @@ void UHandGrabSubsystem::ReleaseItems(UObject* Source)
 	}
 }
 
+void UHandGrabSubsystem::ForceReleaseItem(UObject* Source, int32 Item)
+{
+	for (FHandGrabHand& Hand : Hands)
+	{
+		if (Hand.Held.IsItem() && Hand.Held.Item == Item && Hand.Held.Source.Get() == Source)
+		{
+			Hand.Held.Reset();
+		}
+	}
+}
+
 bool UHandGrabSubsystem::IsItemHeld(const UObject* Source, int32 Item) const
 {
 	for (const FHandGrabHand& Hand : Hands)
@@ -397,6 +433,13 @@ void UHandGrabSubsystem::ResolveHands()
 		}
 		FHandGrabHand Hand;
 		Hand.Mesh = Mesh;
+		// Tip distances past the last joint, measured on the Meta hand's markers.
+		const TCHAR* DigitNames[] = { TEXT("thumb"), TEXT("index"), TEXT("middle"), TEXT("ring"), TEXT("pinky") };
+		const float DistalRatios[] = { 0.72f, 0.9f, 0.88f, 0.91f, 1.07f };
+		for (int32 Digit = 0; Digit < 5; ++Digit)
+		{
+			Hand.Digits[Digit] = FindDigit(Mesh, DigitNames[Digit], DistalRatios[Digit]);
+		}
 		Hand.ThumbTipBone = Thumb;
 		Hand.IndexTipBone = Index;
 		Hand.MiddleTipBone = FindTipBone(Mesh, TEXT("middle"));
@@ -422,13 +465,71 @@ void UHandGrabSubsystem::ResolveHands()
 	{
 		const FHandGrabHand& Hand = Hands[i];
 		UE_LOG(LogHVPHandGrab, Log,
-			TEXT("Hand %d = %s: thumb=%s index=%s middle=%s pads=%s/%s/%s knuckle=%s palm=%s wrist=%s"),
+			TEXT("Hand %d = %s: thumb=%s index=%s middle=%s%s pads=%s/%s/%s knuckle=%s palm=%s wrist=%s"),
 			i, *GetNameSafe(Hand.Mesh.Get()), *Hand.ThumbTipBone.ToString(),
 			*Hand.IndexTipBone.ToString(), *Hand.MiddleTipBone.ToString(),
+			Hand.Digits[0].Tip.IsNone() ? TEXT(" (no tip markers: tips estimated from the last joints)") : TEXT(""),
 			*Hand.ThumbPadBone.ToString(), *Hand.IndexPadBone.ToString(),
 			*Hand.MiddlePadBone.ToString(), *Hand.MiddleKnuckleBone.ToString(),
 			*Hand.PalmBone.ToString(), *Hand.WristBone.ToString());
 	}
+}
+
+FVector UHandGrabSubsystem::DigitTip(const USkinnedMeshComponent* Mesh, const FHandGrabDigit& Digit) const
+{
+	if (!Digit.Tip.IsNone())
+	{
+		return BoneWorld(Mesh, Digit.Tip);
+	}
+	const FVector J3 = BoneWorld(Mesh, Digit.Joint3);
+	if (Digit.Joint2.IsNone())
+	{
+		return J3;
+	}
+	// The distal phalanx carries on from the middle one, bent about 2/3 as far as the joint before
+	// it bent (the usual coupling between a finger's last two joints), so the estimate follows a
+	// pinching finger's curl.
+	const FVector J2 = BoneWorld(Mesh, Digit.Joint2);
+	const FVector Middle = J3 - J2;
+	const float Length = Middle.Size();
+	if (Length < KINDA_SMALL_NUMBER)
+	{
+		return J3;
+	}
+	FVector Distal = Middle / Length;
+	if (!Digit.Joint1.IsNone())
+	{
+		const FVector Proximal = (J2 - BoneWorld(Mesh, Digit.Joint1)).GetSafeNormal();
+		if (!Proximal.IsNearlyZero())
+		{
+			const FQuat Bend = FQuat::FindBetweenNormals(Proximal, Distal);
+			Distal = FQuat::Slerp(FQuat::Identity, Bend, 0.67f).RotateVector(Distal);
+		}
+	}
+	return J3 + Distal * (Length * Digit.DistalRatio);
+}
+
+bool UHandGrabSubsystem::GetFingertips(int32 HandIndex, TArray<FVector>& OutTips) const
+{
+	OutTips.Reset();
+	if (!Hands.IsValidIndex(HandIndex))
+	{
+		return false;
+	}
+	const FHandGrabHand& Hand = Hands[HandIndex];
+	const USkinnedMeshComponent* Mesh = Hand.Mesh.Get();
+	if (!Mesh)
+	{
+		return false;
+	}
+	for (const FHandGrabDigit& Digit : Hand.Digits)
+	{
+		if (Digit.IsValid())
+		{
+			OutTips.Add(DigitTip(Mesh, Digit));
+		}
+	}
+	return true;
 }
 
 bool UHandGrabSubsystem::MeasureHand(FHandGrabHand& Hand) const
@@ -439,10 +540,10 @@ bool UHandGrabSubsystem::MeasureHand(FHandGrabHand& Hand) const
 		return false;
 	}
 
-	Hand.ThumbTip = BoneWorld(Mesh, Hand.ThumbTipBone);
-	Hand.IndexTip = BoneWorld(Mesh, Hand.IndexTipBone);
-	Hand.bHasMiddleTip = !Hand.MiddleTipBone.IsNone();
-	Hand.MiddleTip = Hand.bHasMiddleTip ? BoneWorld(Mesh, Hand.MiddleTipBone) : Hand.IndexTip;
+	Hand.ThumbTip = DigitTip(Mesh, Hand.Digits[0]);
+	Hand.IndexTip = DigitTip(Mesh, Hand.Digits[1]);
+	Hand.bHasMiddleTip = Hand.Digits[2].IsValid();
+	Hand.MiddleTip = Hand.bHasMiddleTip ? DigitTip(Mesh, Hand.Digits[2]) : Hand.IndexTip;
 
 	const bool bHasWrist = !Hand.WristBone.IsNone();
 	const FVector Wrist = bHasWrist ? BoneWorld(Mesh, Hand.WristBone) : Hand.IndexTip;
@@ -601,7 +702,10 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 	}
 
 	Hand.TimeSinceRecentHover += DeltaTime;
-	const bool bGestureClosed = Hand.bPinchClosed || Hand.bFistClosed;
+	// What keeps a held item: the gesture it may be grabbed with. One that refuses fists is held by
+	// the pinch alone, so curling into a fist lets go of it instead of gripping on.
+	const FHandGrabbableParams* KeepParams = Hand.Held.IsValid() ? GetTargetParams(Hand.Held) : nullptr;
+	const bool bGestureClosed = Hand.bPinchClosed || (Hand.bFistClosed && (!KeepParams || KeepParams->bAllowFistGrab));
 
 	if (!Hand.bPinching && bGestureClosed)
 	{
@@ -610,6 +714,7 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 		Hand.TimeSinceClose = 0.f;
 		Hand.TimeOpen = 0.f;
 		Hand.bSqueezeArmed = false;
+		Hand.bTightenPending = false;
 		Hand.SqueezeRefPinch = Hand.PinchMetric;
 		Hand.SqueezeRefFist = Hand.FistMetric;
 
@@ -627,7 +732,7 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 				// point off it. Take it if it's still roughly in reach of any probe.
 				bool bEnabled = false;
 				const FHandGrabbableParams* Params = GetTargetParams(Remembered, &bEnabled);
-				if (Params && bEnabled && !IsHeldByAnyHand(Remembered))
+				if (Params && bEnabled && !IsHeldByAnyHand(Remembered) && PassesGestureGate(*Params, Hand))
 				{
 					const FVector Probes[] = {Hand.PinchMid, Hand.ThumbTip, Hand.IndexTip,
 						Hand.MiddleTip, Hand.PalmPoint};
@@ -647,6 +752,13 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 			{
 				GrabCandidate(Hand, HandIndex, Candidate, Reason);
 			}
+			else
+			{
+				// In reach, refused only for the gesture: keep its hover hint lit until it qualifies.
+				const FHandGrabTarget Waiting = FindGrabCandidateForHand(Hand, false);
+				Hand.bTightenPending = Waiting.IsValid();
+				SetHandHover(Hand, Waiting);
+			}
 		}
 	}
 	else if (Hand.bPinching && !bGestureClosed)
@@ -661,6 +773,7 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 			Hand.bPinching = false;
 			Hand.TimeOpen = 0.f;
 			Hand.bSqueezeArmed = false;
+			Hand.bTightenPending = false;
 			if (Hand.Held.IsValid() && ShouldLog())
 			{
 				UE_LOG(LogHVPHandGrab, Log,
@@ -680,7 +793,14 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 		if (!Hand.Held.IsValid() && CanHandGrab(Hand))
 		{
 			const FHandGrabTarget Candidate = FindGrabCandidateForHand(Hand);
-			if (Candidate.IsValid() && Hand.TimeSinceClose <= GrabGraceSeconds)
+			if (Candidate.IsValid() && Hand.bTightenPending)
+			{
+				// In reach since before the gesture qualified for it: tightening is the grab.
+				Hand.bTightenPending = false;
+				SetHandHover(Hand, FHandGrabTarget());
+				GrabCandidate(Hand, HandIndex, Candidate, TEXT("tighten"));
+			}
+			else if (Candidate.IsValid() && Hand.TimeSinceClose <= GrabGraceSeconds)
 			{
 				// Closed a beat before arriving (or tracking lagged the reach).
 				GrabCandidate(Hand, HandIndex, Candidate, TEXT("grace"));
@@ -692,6 +812,10 @@ void UHandGrabSubsystem::TickHand(FHandGrabHand& Hand, int32 HandIndex, float De
 				Hand.bSqueezeArmed = false;
 				Hand.SqueezeRefPinch = Hand.PinchMetric;
 				Hand.SqueezeRefFist = Hand.FistMetric;
+				// In reach but refused for the gesture: grab when it qualifies, hover-lit meanwhile.
+				const FHandGrabTarget Waiting = FindGrabCandidateForHand(Hand, false);
+				Hand.bTightenPending = Waiting.IsValid();
+				SetHandHover(Hand, Waiting);
 			}
 			else if (!Hand.bSqueezeArmed)
 			{
@@ -920,15 +1044,26 @@ void UHandGrabSubsystem::ReleaseHeld(FHandGrabHand& Hand, int32 HandIndex)
 	BroadcastReleased(Released, HandIndex, Hand.PinchMid);
 }
 
+bool UHandGrabSubsystem::PassesGestureGate(const FHandGrabbableParams& Params, const FHandGrabHand& Hand) const
+{
+	if (!Hand.bPinchClosed && !Hand.bFistClosed)
+	{
+		return true;
+	}
+	const bool bPinch = Hand.bPinchClosed && (Params.MaxPinchDistance <= 0.f || Hand.PinchMetric <= Params.MaxPinchDistance);
+	const bool bFist = Hand.bFistClosed && Params.bAllowFistGrab;
+	return bPinch || bFist;
+}
+
 FHandGrabTarget UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, float ReachScale,
-	float& OutDistance) const
+	float& OutDistance, const FHandGrabHand* GateHand) const
 {
 	FHandGrabTarget Best;
 	float BestDist = TNumericLimits<float>::Max();
 	for (int32 i = 0; i < Grabbables.Num(); ++i)
 	{
 		UPrimitiveComponent* Comp = Grabbables[i].Comp.Get();
-		if (!Comp || !Grabbables[i].bEnabled)
+		if (!Comp || !Grabbables[i].bEnabled || (GateHand && !PassesGestureGate(Grabbables[i].Params, *GateHand)))
 		{
 			continue;
 		}
@@ -952,7 +1087,7 @@ FHandGrabTarget UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, f
 	for (const FHandGrabItemSourceEntry& Entry : ItemSources)
 	{
 		UObject* Source = Entry.Object.Get();
-		if (!Source || !Entry.bEnabled)
+		if (!Source || !Entry.bEnabled || (GateHand && !PassesGestureGate(Entry.Params, *GateHand)))
 		{
 			continue;
 		}
@@ -970,7 +1105,7 @@ FHandGrabTarget UHandGrabSubsystem::FindGrabCandidate(const FVector& WorldPos, f
 	return Best;
 }
 
-FHandGrabTarget UHandGrabSubsystem::FindGrabCandidateForHand(const FHandGrabHand& Hand) const
+FHandGrabTarget UHandGrabSubsystem::FindGrabCandidateForHand(const FHandGrabHand& Hand, bool bGated) const
 {
 	// The grab point first; the fingertips and palm as backups, since the item the player is
 	// reaching for is often touching a fingertip while the grab point sits a few cm off it.
@@ -980,7 +1115,7 @@ FHandGrabTarget UHandGrabSubsystem::FindGrabCandidateForHand(const FHandGrabHand
 	auto Consider = [&](const FVector& Probe, float Penalty)
 	{
 		float Dist = 0.f;
-		const FHandGrabTarget Candidate = FindGrabCandidate(Probe, 1.f, Dist);
+		const FHandGrabTarget Candidate = FindGrabCandidate(Probe, 1.f, Dist, bGated ? &Hand : nullptr);
 		if (Candidate.IsValid() && Dist + Penalty < BestScore)
 		{
 			BestScore = Dist + Penalty;

@@ -89,6 +89,18 @@ struct FHandGrabbableParams
 	// Eases at FollowSpeed unless bRigidFollow, matching the position channel either way.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hand Grab")
 	bool bFollowRotation = false;
+
+	// Take this only with a pinch at least this tight: thumb to index/middle within this many cm
+	// (reference-hand cm, like PinchStartDistance, so it scales with the hand). 0 = any pinch that
+	// closes the gesture. For small things, where the subsystem's 3 cm close would grab from a loose,
+	// half-formed pinch. A hand that closed in reach but too loose takes it the moment it tightens
+	// past this, no further squeeze needed.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hand Grab", meta=(ClampMin="0"))
+	float MaxPinchDistance = 0.f;
+
+	// Let a closed fist (or a controller grip squeeze) take this. Off: pinches only.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hand Grab")
+	bool bAllowFistGrab = true;
 };
 
 UINTERFACE(MinimalAPI, meta=(CannotImplementInterfaceInBlueprint))
@@ -188,9 +200,21 @@ enum class EHandGrabCarry : uint8
 
 // One tracked VR hand: a skinned mesh on the player pawn carrying both a thumb-tip and an
 // index-tip bone. Plain struct — transient, rebuilt whenever the pawn or its meshes change.
+// One digit's tip on a hand mesh: a marker bone where the mesh has one, else estimated from the
+// digit's last three joints (some meshes ship without the markers).
+struct FHandGrabDigit
+{
+	FName Tip;                                  // *_tip / *_null marker; NAME_None = estimate
+	FName Joint1, Joint2, Joint3;               // the last three joints, for the estimate
+	float DistalRatio = 0.9f;                   // tip distance past Joint3, in Joint2->Joint3 lengths
+	bool IsValid() const { return !Tip.IsNone() || !Joint3.IsNone(); }
+};
+
 struct FHandGrabHand
 {
 	TWeakObjectPtr<USkinnedMeshComponent> Mesh;
+	// Thumb, index, middle, ring, pinky.
+	FHandGrabDigit Digits[5];
 	FName ThumbTipBone;
 	FName IndexTipBone;
 	FName MiddleTipBone;           // NAME_None = thumb-middle pinch / middle curl not checked
@@ -266,6 +290,9 @@ struct FHandGrabHand
 	float SqueezeRefPinch = TNumericLimits<float>::Max();
 	float SqueezeRefFist = TNumericLimits<float>::Max();
 	bool bSqueezeArmed = false;
+	// Closed with something in reach that its registration refused only for the gesture (too loose a
+	// pinch, a fist where pinches are asked for): grab it once the gesture qualifies.
+	bool bTightenPending = false;
 
 	float LogCooldown = 0.f;
 };
@@ -510,6 +537,17 @@ public:
 	// about to rebuild or renumber its items.
 	void ReleaseItems(UObject* Source);
 
+	// Pry item Item of Source out of whatever hand holds it, WITHOUT broadcasting — the item
+	// counterpart of ForceRelease, for a source taking one item over (snapping it somewhere, say).
+	// Other items stay held. No-op if nothing holds it.
+	void ForceReleaseItem(UObject* Source, int32 Item);
+
+	// The world positions of a hand's fingertips: thumb, index, middle, ring, pinky (those the mesh
+	// has). Marker bones where the mesh carries them; otherwise estimated from each digit's last
+	// joints, as the pinch measure is. False for an unknown hand.
+	UFUNCTION(BlueprintPure, Category="Hand Grab")
+	bool GetFingertips(int32 HandIndex, TArray<FVector>& OutTips) const;
+
 	// True while any hand holds item Item of Source.
 	bool IsItemHeld(const UObject* Source, int32 Item) const;
 
@@ -585,10 +623,19 @@ private:
 
 	// Nearest enabled, unheld grabbable (component or item) within its own GrabRadius (times
 	// ReachScale) of WorldPos; an unset target if none. OutDistance receives its distance.
-	FHandGrabTarget FindGrabCandidate(const FVector& WorldPos, float ReachScale, float& OutDistance) const;
+	// GateHand: skip what that (closed) hand's gesture does not qualify for (PassesGestureGate).
+	FHandGrabTarget FindGrabCandidate(const FVector& WorldPos, float ReachScale, float& OutDistance,
+		const FHandGrabHand* GateHand = nullptr) const;
 
 	// Nearest candidate across all of a hand's probe points (grab point, fingertips, palm).
-	FHandGrabTarget FindGrabCandidateForHand(const FHandGrabHand& Hand) const;
+	FHandGrabTarget FindGrabCandidateForHand(const FHandGrabHand& Hand, bool bGated = true) const;
+
+	// Where a digit's tip is now: its marker bone, or the estimate from its last joints.
+	FVector DigitTip(const USkinnedMeshComponent* Mesh, const FHandGrabDigit& Digit) const;
+
+	// Whether a hand's gesture qualifies for a registration: an open hand always (hovering asks
+	// nothing); a closed one by a pinch at least MaxPinchDistance tight, or a fist if bAllowFistGrab.
+	bool PassesGestureGate(const FHandGrabbableParams& Params, const FHandGrabHand& Hand) const;
 
 	// Takes Candidate into Hand: sets Held and the grab anchor, broadcasts OnGrabbed.
 	void GrabCandidate(FHandGrabHand& Hand, int32 HandIndex, const FHandGrabTarget& Candidate, const TCHAR* Reason);

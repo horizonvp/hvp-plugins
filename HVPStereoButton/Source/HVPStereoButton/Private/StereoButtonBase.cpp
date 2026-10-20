@@ -1,6 +1,7 @@
 #include "StereoButtonBase.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/BoxComponent.h"
 #include "Components/Image.h"
@@ -93,6 +94,7 @@ void AStereoButtonBase::ApplyLayout()
 		if (WidgetComp->GetWidgetClass() != FaceWidgetClass)
 		{
 			WidgetComp->SetWidgetClass(FaceWidgetClass);
+			bFaceRedrawResolved = false;	// a new face: decide static vs live again once it exists
 		}
 		const float Super = FMath::Clamp(FaceSupersample, 1.f, 4.f);
 		// More texels, same centimetres: the draw size grows by the supersample and the plane
@@ -132,6 +134,7 @@ void AStereoButtonBase::ApplyLayout()
 
 	PushLabel();
 	PushColor();
+	RequestFaceRedraw();	// the draw size may have changed
 }
 
 void AStereoButtonBase::OnConstruction(const FTransform& Transform)
@@ -193,6 +196,10 @@ void AStereoButtonBase::Tick(float DeltaSeconds)
 
 	StepFloat(DeltaSeconds, ScratchSamples);
 	ViewOffset = ComputeViewOffset();
+	if (!bFaceRedrawResolved)
+	{
+		ResolveFaceRedrawMode();
+	}
 	ReconcileSurface();
 	PushWidgetState();
 	PushFaceMaterialParams();
@@ -484,6 +491,36 @@ UUserWidget* AStereoButtonBase::GetFaceWidget() const
 	return WidgetComp ? WidgetComp->GetWidget() : nullptr;
 }
 
+void AStereoButtonBase::RequestFaceRedraw()
+{
+	if (WidgetComp)
+	{
+		WidgetComp->RequestRedraw();
+	}
+}
+
+void AStereoButtonBase::ResolveFaceRedrawMode()
+{
+	UUserWidget* W = GetFaceWidget();
+	if (!WidgetComp || !W)
+	{
+		return;	// the widget component creates the face lazily; try again next tick
+	}
+	bFaceRedrawResolved = true;
+
+	// A face is LIVE if it consumes the per-tick pushes: the interface (parallax / press state / idle
+	// shimmer) or a FaceImage material (ViewOffset / PressAmount). Anything else only changes through
+	// PushLabel / PushColor / ApplyLayout, which request their own redraw. A static face redrawn every
+	// frame was ~0.7 ms of game thread per button in Insights (ConfirmButton_BP, 2026-10-01).
+	const UImage* Face = Cast<UImage>(W->GetWidgetFromName(FaceImageWidgetName));
+	const bool bLive = W->Implements<UStereoButtonWidgetInterface>()
+		|| (Face && Face->GetBrush().GetResourceObject() && Face->GetBrush().GetResourceObject()->IsA<UMaterialInterface>());
+	WidgetComp->SetManuallyRedraw(bRedrawStaticFaceOnlyOnChange && !bLive);
+	WidgetComp->RequestRedraw();
+	UE_LOG(LogStereoButton, Log, TEXT("[%s] face redraw: %s"), *GetName(),
+		(bRedrawStaticFaceOnlyOnChange && !bLive) ? TEXT("on change") : TEXT("every frame"));
+}
+
 void AStereoButtonBase::PushLabel()
 {
 	UUserWidget* W = GetFaceWidget();
@@ -495,10 +532,25 @@ void AStereoButtonBase::PushLabel()
 	{
 		IStereoButtonWidgetInterface::Execute_SetButtonLabel(W, LabelText);
 	}
-	if (UTextBlock* Text = Cast<UTextBlock>(W->GetWidgetFromName(LabelTextWidgetName)))
+	UTextBlock* Text = Cast<UTextBlock>(W->GetWidgetFromName(LabelTextWidgetName));
+	// Faces that neither implement the interface nor name a TextBlock "LabelText" (the stock
+	// StereoButtonFace_WBP has one unnamed TextBlock reading "START") would otherwise never
+	// show LabelText at all - fall back to the face's first TextBlock.
+	if (!Text && !W->Implements<UStereoButtonWidgetInterface>() && W->WidgetTree)
+	{
+		W->WidgetTree->ForEachWidget([&Text](UWidget* Child)
+		{
+			if (!Text)
+			{
+				Text = Cast<UTextBlock>(Child);
+			}
+		});
+	}
+	if (Text)
 	{
 		Text->SetText(LabelText);
 	}
+	RequestFaceRedraw();
 }
 
 void AStereoButtonBase::PushColor()
@@ -508,6 +560,7 @@ void AStereoButtonBase::PushColor()
 	{
 		IStereoButtonWidgetInterface::Execute_SetButtonColor(W, LabelColor);
 	}
+	RequestFaceRedraw();
 }
 
 void AStereoButtonBase::PushWidgetState()

@@ -25,5 +25,5 @@ Build/
 *.log
 *.pyc
 
-# Third-party tools the HVPText font tools call; each machine fetches its own (Docs/HVPText.md)
-HVPSystems/Tools/HVPText/bin/
+# HVPText's font tools run this; committed on purpose, past any project's *.exe ignore (Docs/HVPText.md)
+!HVPSystems/Tools/HVPText/bin/msdf-atlas-gen/msdf-atlas-gen.exe

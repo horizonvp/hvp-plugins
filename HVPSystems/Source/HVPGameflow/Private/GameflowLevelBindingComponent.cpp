@@ -41,6 +41,8 @@ bool UGameflowLevelBindingComponent::EnsureBoundToController()
 	Controller->OnStateChangeRequested.AddDynamic(this, &UGameflowLevelBindingComponent::HandleStateChangeRequested);
 	Controller->OnStateChangeDemanded.AddDynamic(this, &UGameflowLevelBindingComponent::HandleStateChangeDemanded);
 	Controller->OnStateChange.AddDynamic(this, &UGameflowLevelBindingComponent::HandleStateChange);
+	// Bound late, already inside a preload window: we missed that state change.
+	PreloadForState(Controller->CurrentState);
 	return true;
 }
 
@@ -52,8 +54,13 @@ void UGameflowLevelBindingComponent::EndPlay(const EEndPlayReason::Type EndPlayR
 		{
 			World->GetTimerManager().ClearTimer(Pending.Value);
 		}
+		for (TPair<FString, FTimerHandle>& Pending : PendingPreloads)
+		{
+			World->GetTimerManager().ClearTimer(Pending.Value);
+		}
 	}
 	PendingUnloads.Empty();
+	PendingPreloads.Empty();
 	if (CachedController)
 	{
 		CachedController->OnStateChangeRequested.RemoveDynamic(this, &UGameflowLevelBindingComponent::HandleStateChangeRequested);
@@ -226,11 +233,167 @@ void UGameflowLevelBindingComponent::HandleStateChange(const FString& OldState, 
 				Pair.Value.UnloadDelaySeconds, /*bLoop=*/false);
 			UE_LOG(LogHVPGameflow, Log, TEXT("LevelBinding '%s': unload scheduled in %.1fs"),
 				*Key, Pair.Value.UnloadDelaySeconds);
+
+			if (Pair.Value.bHideDuringUnloadDelay)
+			{
+				HideBinding(Key);
+			}
 		}
 		else
 		{
 			UnloadBinding(Key);
 		}
+	}
+
+	// After the unloads, so a level unloaded by this same change is seen as still on its way out.
+	PreloadForState(NewState);
+}
+
+bool UGameflowLevelBindingComponent::IsLevelNeededElsewhere(const FString& BindingKey,
+	const TSoftObjectPtr<UWorld>& Level) const
+{
+	// Several bindings (and several levels per binding) may point at the SAME level - back-to-back
+	// sections served by one scene. Checked at the moment of acting, so delayed unloads are caught too.
+	if (!CachedController)
+	{
+		return false;
+	}
+	const FString BoundPackage = Level.GetLongPackageName();
+	for (const TPair<FString, FGameflowLevelBinding>& Other : Bindings)
+	{
+		if (Other.Key == BindingKey
+			|| !UGameflowControllerComponent::IsStateWithin(CachedController->CurrentState, Other.Key))
+		{
+			continue;
+		}
+		TArray<TSoftObjectPtr<UWorld>> OtherLevels;
+		AppendBoundLevels(Other.Value, OtherLevels);
+		for (const TSoftObjectPtr<UWorld>& OtherLevel : OtherLevels)
+		{
+			if (OtherLevel.GetLongPackageName() == BoundPackage)
+			{
+				UE_LOG(LogHVPGameflow, Log,
+					TEXT("LevelBinding '%s': keeping %s — binding '%s' still covers current state '%s'"),
+					*BindingKey, *Level.GetAssetName(), *Other.Key, *CachedController->CurrentState);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+void UGameflowLevelBindingComponent::HideBinding(const FString& BindingKey)
+{
+	const FGameflowLevelBinding* Binding = Bindings.Find(BindingKey);
+	if (!Binding)
+	{
+		return;
+	}
+
+	TArray<TSoftObjectPtr<UWorld>> Levels;
+	AppendBoundLevels(*Binding, Levels);
+	for (const TSoftObjectPtr<UWorld>& Level : Levels)
+	{
+		ULevelStreaming* Streaming = FindStreamingLevel(Level);
+		if (!Streaming || IsLevelNeededElsewhere(BindingKey, Level))
+		{
+			continue;
+		}
+		// A load that never finished can't hold the (long-gone) transition open.
+		const FString InstanceKey = MakeInstanceKey(BindingKey, Level);
+		if (PendingLoads.Remove(InstanceKey) > 0 && CachedController)
+		{
+			CachedController->ClearEntryRequirement(RequirementName(InstanceKey));
+		}
+		Streaming->SetShouldBeVisible(false);
+		UE_LOG(LogHVPGameflow, Log, TEXT("LevelBinding '%s': hid %s until the unload"),
+			*BindingKey, *Level.GetAssetName());
+	}
+}
+
+void UGameflowLevelBindingComponent::PreloadForState(const FString& State)
+{
+	for (const TPair<FString, FGameflowLevelBinding>& Pair : Bindings)
+	{
+		if (!Pair.Value.PreloadDuringState.IsEmpty()
+			&& UGameflowControllerComponent::IsStateWithin(State, Pair.Value.PreloadDuringState)
+			&& !PendingPreloads.Contains(Pair.Key))
+		{
+			TryPreload(Pair.Key);
+		}
+	}
+}
+
+void UGameflowLevelBindingComponent::TryPreload(const FString& BindingKey)
+{
+	const FGameflowLevelBinding* Binding = Bindings.Find(BindingKey);
+	if (!Binding || !CachedController)
+	{
+		StopPreloadRetry(BindingKey);
+		return;
+	}
+
+	// Out of the window, or already into the bound subtree (where the entry path owns the load).
+	const FString& Current = CachedController->CurrentState;
+	if (!UGameflowControllerComponent::IsStateWithin(Current, Binding->PreloadDuringState)
+		|| UGameflowControllerComponent::IsStateWithin(Current, BindingKey))
+	{
+		StopPreloadRetry(BindingKey);
+		return;
+	}
+
+	bool bWaiting = false;
+	TArray<TSoftObjectPtr<UWorld>> Levels;
+	AppendBoundLevels(*Binding, Levels);
+	for (const TSoftObjectPtr<UWorld>& Level : Levels)
+	{
+		ULevelStreaming* Streaming = FindStreamingLevel(Level);
+		if (!Streaming)
+		{
+			UE_LOG(LogHVPGameflow, Error, TEXT("LevelBinding '%s': level '%s' is not a streaming level of this map — cannot preload"),
+				*BindingKey, *Level.ToString());
+			continue;
+		}
+
+		if (Streaming->ShouldBeLoaded() && !PendingUnloads.Contains(BindingKey))
+		{
+			continue;	// already loaded or on its way in
+		}
+
+		// The last session's copy must be fully gone first: reloading a level that never finished
+		// unloading would hand back its actors with their old state.
+		if (PendingUnloads.Contains(BindingKey) || Streaming->GetLevelStreamingState() != ELevelStreamingState::Unloaded)
+		{
+			bWaiting = true;
+			continue;
+		}
+
+		Streaming->SetShouldBeLoaded(true);
+		UE_LOG(LogHVPGameflow, Log, TEXT("LevelBinding '%s': preloading %s (hidden) during '%s'"),
+			*BindingKey, *Level.GetAssetName(), *Current);
+	}
+
+	if (!bWaiting)
+	{
+		StopPreloadRetry(BindingKey);
+	}
+	else if (!PendingPreloads.Contains(BindingKey))
+	{
+		UE_LOG(LogHVPGameflow, Log, TEXT("LevelBinding '%s': preload waiting for a previous copy to finish unloading"), *BindingKey);
+		FTimerHandle& Timer = PendingPreloads.Add(BindingKey);
+		const FString Key = BindingKey;
+		GetWorld()->GetTimerManager().SetTimer(Timer,
+			FTimerDelegate::CreateWeakLambda(this, [this, Key]() { TryPreload(Key); }),
+			0.25f, /*bLoop=*/true);
+	}
+}
+
+void UGameflowLevelBindingComponent::StopPreloadRetry(const FString& BindingKey)
+{
+	if (FTimerHandle* Timer = PendingPreloads.Find(BindingKey))
+	{
+		GetWorld()->GetTimerManager().ClearTimer(*Timer);
+		PendingPreloads.Remove(BindingKey);
 	}
 }
 
@@ -247,48 +410,9 @@ void UGameflowLevelBindingComponent::UnloadBinding(const FString& BindingKey)
 	for (const TSoftObjectPtr<UWorld>& Level : Levels)
 	{
 		ULevelStreaming* Streaming = FindStreamingLevel(Level);
-		if (!Streaming)
-		{
-			continue;
-		}
-
-		// Book-end guard: several bindings (and now several levels per binding) may point
-		// at the SAME level — back-to-back sections served by one scene. Leaving one
-		// section must not unload a level another binding still needs for the CURRENT
-		// state. Checked at the moment of unload so delayed unloads are caught too.
-		bool bStillNeeded = false;
-		if (CachedController)
-		{
-			const FString BoundPackage = Level.GetLongPackageName();
-			for (const TPair<FString, FGameflowLevelBinding>& Other : Bindings)
-			{
-				if (Other.Key == BindingKey
-					|| !UGameflowControllerComponent::IsStateWithin(
-						CachedController->CurrentState, Other.Key))
-				{
-					continue;
-				}
-				TArray<TSoftObjectPtr<UWorld>> OtherLevels;
-				AppendBoundLevels(Other.Value, OtherLevels);
-				for (const TSoftObjectPtr<UWorld>& OtherLevel : OtherLevels)
-				{
-					if (OtherLevel.GetLongPackageName() == BoundPackage)
-					{
-						UE_LOG(LogHVPGameflow, Log,
-							TEXT("LevelBinding '%s': keeping %s loaded — binding '%s' still covers current state '%s'"),
-							*BindingKey, *Level.GetAssetName(), *Other.Key,
-							*CachedController->CurrentState);
-						bStillNeeded = true;
-						break;
-					}
-				}
-				if (bStillNeeded)
-				{
-					break;
-				}
-			}
-		}
-		if (bStillNeeded)
+		// Book-end guard: leaving one section must not unload a level another binding still needs
+		// for the CURRENT state.
+		if (!Streaming || IsLevelNeededElsewhere(BindingKey, Level))
 		{
 			continue;
 		}

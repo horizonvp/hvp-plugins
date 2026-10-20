@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.2.0",
 	"FriendlyName": "HVP Systems",
-	"Description": "Horizon VP's runtime systems: AnimatedGameflow (hierarchical state machine with exit authorities, entry requirements and All/Any queue blocks), CodeAnimation (code-driven animation timelines), HandGrab (world-level pinch-grab primitive) and HVPText (letters as data, drawn in one instanced batch per frame by a world subsystem). The editor module carries the gameflow smoke test and the state-rename commandlet.",
+	"Description": "Horizon VP's runtime systems: AnimatedGameflow (hierarchical state machine with exit authorities, entry requirements and All/Any queue blocks), CodeAnimation (code-driven animation timelines), HandGrab (world-level pinch-grab primitive) and HVPText (letters as data, drawn in one instanced batch per frame by a world subsystem). The editor module carries the gameflow smoke test, the state-rename commandlet and Make HVPText Font (a Font Face's context menu), whose font tools' Python packages are listed as PythonRequirements.",
 	"Category": "HVP",
 	"CreatedBy": "Horizon VP",
 	"CreatedByURL": "https://horizonvp.com",
@@ -39,6 +39,22 @@
 			"Name": "HVPSystemsEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true
+		}
+	],
+	"PythonRequirements": [
+		{
+			"Platform": "Win64",
+			"Requirements": [
+				"fonttools==4.53.1 --hash=sha256:d4d0096cb1ac7a77b3b41cd78c9b6bc4a400550e21dc7a92f2b5ab53ed74eb02 --hash=sha256:f1f8758a2ad110bd6432203a344269f445a2907dc24ef6bccfd0ac4e14e0d71d",
+				"numpy==1.26.4 --hash=sha256:cd25bcecc4974d09257ffcd1f098ee778f7834c3ad767fe5db785be9a4aa9cb2",
+				"mapbox-earcut==1.0.1 --hash=sha256:5e736557539c74fa969e866889c2b0149fc12668f35e3ae33667d837ff2880d3"
+			]
 		}
 	]
 }

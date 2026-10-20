@@ -12,20 +12,35 @@ TTFs in the project.
 
 ## Setting it up in a project
 
-1. **Make the fonts.** Put TTFs under `Art/Fonts` (any depth, one file per weight, named by the
-   font id: `Cinzel-700.ttf`). Then, from the project root, with the tools' Python requirements
-   installed (`pip install -r Plugins/HVP/HVPSystems/Tools/HVPText/requirements.txt`):
+1. **Make the fonts.** From the editor: right-click a **Font Face** in the Content Browser >
+   **Make HVPText Font...**. The dialog asks for:
+
+   | Field | Default |
+   |---|---|
+   | Font id | `<Family>-<weight>`: the family from the asset name (`Gotham_Medium_FF`), the weight from the font's OS/2 table (500) |
+   | Folder | `<the font face's folder>/<Family>/<id>` |
+   | Materials folder | Where the project's Glyph Mesh Material is, else `/Game/HVPText/Materials`. The two materials are made only if missing, so edits to them survive |
+   | As MSDF, As meshes | Both |
+
+   Make writes the font face's data to `Saved/HVPText/<id>`, runs `Tools/HVPText/make_font.py` (the
+   three scripts below, in the editor's own Python) and fills in any of the settings in step 2 that
+   are still empty. The tools' Python packages are this plugin's `PythonRequirements`, which the
+   editor installs at startup (Windows; it needs network access once).
+
+   By hand, for many fonts at once: put TTFs under `Art/Fonts` (any depth, one file per weight,
+   named by the font id: `Cinzel-700.ttf`). Then, from the project root, with the tools' Python
+   requirements installed (`pip install -r Plugins/HVP/HVPSystems/Tools/HVPText/requirements.txt`):
 
    ```
-   python Plugins/HVP/HVPSystems/Tools/HVPText/build_fonts.py
+   python Plugins/HVP/HVPSystems/Tools/HVPText/build_fonts.py                (--metrics-only: no MSDF)
    python Plugins/HVP/HVPSystems/Tools/HVPText/build_glyph_meshes.py      (optional: glyph meshes)
    UnrealEditor-Cmd <Project>.uproject -run=pythonscript -nohmd -script="Plugins/HVP/HVPSystems/Tools/HVPText/import_fonts.py --fonts-folder=/Game/<Where>/Fonts --materials-folder=/Game/<Where>/Materials"
    ```
 
-   `build_fonts.py` needs **msdf-atlas-gen** v1.4 (MIT, Viktor Chlumsky). It is not committed: put
-   it in `Tools/HVPText/bin/` from its [releases](https://github.com/Chlumsky/msdf-atlas-gen/releases),
-   set `MSDF_ATLAS_GEN`, or pass `--msdf`. Every script takes `--fonts`, `--out` (or the importer's
-   `--generated`) and `--only <Font> ...`; their headers list the rest.
+   `build_fonts.py` uses **msdf-atlas-gen** v1.4 (MIT, Viktor Chlumsky), committed for Windows in
+   `Tools/HVPText/bin/msdf-atlas-gen/` with its licence; `MSDF_ATLAS_GEN` or `--msdf` picks another.
+   Every script takes `--fonts`, `--out` (or the importer's `--generated`) and `--only <Font> ...`;
+   their headers list the rest.
 
 2. **Point the settings at them.** Project Settings > Plugins > **HVP Text**:
 

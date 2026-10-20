@@ -5,15 +5,20 @@ font. Runs inside the editor, headless or not:
 
 Options (all optional):
     --fonts-folder=/Game/HVPText/Fonts         where the per-font assets go (one subfolder per font)
+    --font-folder=/Game/.../Gotham-500          the exact folder for a single font (with --only=<it>)
     --materials-folder=/Game/HVPText/Materials  where M_LetterMSDF and M_LetterMesh go
     --generated=<path>                          the tools' output (default <Project>/Art/Generated)
     --only=Cinzel-700,Inter-800                 just these fonts
     --materials-only                            rebuild the two materials, nothing else
+    --rebuild-materials                         rebuild them as part of a full import too
     --layout-only                               refresh line metrics and kerning on existing assets
     --meshes-only                               re-import glyph meshes (of --only, or every font)
 
-Run build_fonts.py (and build_glyph_meshes.py for glyph meshes) first. Idempotent: re-running
-re-imports and rewrites every asset. Per font, under <fonts-folder>/<Font>/:
+Run build_fonts.py (and build_glyph_meshes.py for glyph meshes) first; build_fonts.py --metrics-only
+for a font drawn only as glyph meshes, which then gets no atlas. Idempotent: re-running re-imports
+and rewrites every font asset. The materials are only made when missing (or asked for), so edits to
+them survive; a font only needs the material of each technique it has. Per font, under
+<fonts-folder>/<Font>/:
     <Font>_MSDF_T          MTSDF atlas, linear, uncompressed (compression ruins distance fields)
     MI_LetterMSDF_<Font>   M_LetterMSDF bound to the atlas
     Mesh/<Font>_<U+code>_SM  extruded glyph with 3 LODs, where build_glyph_meshes.py made them
@@ -49,6 +54,12 @@ GEN = pathlib.Path(option("generated", str(PROJECT / "Art" / "Generated")))
 FONT_DIR = option("fonts-folder", "/Game/HVPText/Fonts").rstrip("/")
 MAT_DIR = option("materials-folder", "/Game/HVPText/Materials").rstrip("/")
 ONLY = [f for f in (option("only") or "").split(",") if f]
+FONT_FOLDER = (option("font-folder") or "").rstrip("/")
+RESULT = None  # what main() emitted, for a caller running this file with runpy
+
+
+def font_folder(fid):
+    return FONT_FOLDER or f"{FONT_DIR}/{fid}"
 
 # LOD screen sizes for an ~8 cm letter: LOD1 from about 2 m, LOD2 from about 4 m.
 GLYPH_LOD_SCREEN_SIZES = [1.0, 0.06, 0.025]
@@ -56,6 +67,8 @@ GLYPH_LOD_SCREEN_SIZES = [1.0, 0.06, 0.025]
 
 def emit(payload):
     """One line a caller can find in the log."""
+    global RESULT
+    RESULT = payload
     unreal.log_warning("### HVPTEXT_IMPORT: " + json.dumps(payload, default=str))
 
 
@@ -305,8 +318,8 @@ def import_glyph_meshes(fid, material):
         return {}
     # The editor subsystem is not available in a commandlet; the older library has the same calls.
     sms = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem) or unreal.EditorStaticMeshLibrary
-    folder = f"{FONT_DIR}/{fid}/Mesh"
-    temp = f"{FONT_DIR}/_GlyphLodTemp"
+    folder = f"{font_folder(fid)}/Mesh"
+    temp = f"{font_folder(fid)}/_GlyphLodTemp"
     meshes = {}
     for lod0 in sorted(src.glob(f"{fid}_*_LOD0.obj")):
         tag = lod0.stem.split("_")[-2]  # U0041
@@ -330,23 +343,40 @@ def import_glyph_meshes(fid, material):
     return meshes
 
 
-def import_font(fid, msdf_mat, mesh_mat):
+def delete_unreferenced(paths):
+    """Assets a re-import no longer uses (only the font asset referenced them)."""
+    for path in paths:
+        package = path.split(".")[0]
+        if EAL.does_asset_exist(package):
+            EAL.delete_asset(package)
+
+
+def import_font(fid, material):
     meta = json.loads((GEN / "MSDF" / f"{fid}.json").read_text(encoding="utf-8"))
-    folder = f"{FONT_DIR}/{fid}"
+    folder = font_folder(fid)
+    da_path = f"{folder}/{fid}_DA"
+    old = EAL.load_asset(da_path) if EAL.does_asset_exist(da_path) else None
+    stale = set()
 
-    atlas = import_file(GEN / "MSDF" / f"{fid}.png", folder, f"{fid}_MSDF_T")
-    atlas.set_editor_property("srgb", False)
-    atlas.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_VECTOR_DISPLACEMENTMAP)
-    atlas.set_editor_property("never_stream", True)
-    EAL.save_asset(atlas.get_path_name(), only_if_is_dirty=False)
+    # No atlas: built with build_fonts.py --metrics-only, for glyph meshes alone.
+    atlas = mi = None
+    png = GEN / "MSDF" / f"{fid}.png"
+    if png.exists():
+        atlas = import_file(png, folder, f"{fid}_MSDF_T")
+        atlas.set_editor_property("srgb", False)
+        atlas.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_VECTOR_DISPLACEMENTMAP)
+        atlas.set_editor_property("never_stream", True)
+        EAL.save_asset(atlas.get_path_name(), only_if_is_dirty=False)
 
-    mi_path = f"{folder}/MI_LetterMSDF_{fid}"
-    mi = ensure(mi_path, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
-    MEL.set_material_instance_parent(mi, msdf_mat)
-    MEL.set_material_instance_texture_parameter_value(mi, "Atlas", atlas)
-    MEL.set_material_instance_scalar_parameter_value(mi, "AtlasSize", float(meta["atlas"][0]))
-    MEL.set_material_instance_scalar_parameter_value(mi, "PxRange", float(meta["pxRange"]))
-    EAL.save_asset(mi_path, only_if_is_dirty=False)
+        mi_path = f"{folder}/MI_LetterMSDF_{fid}"
+        mi = ensure(mi_path, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+        MEL.set_material_instance_parent(mi, material("msdf"))
+        MEL.set_material_instance_texture_parameter_value(mi, "Atlas", atlas)
+        MEL.set_material_instance_scalar_parameter_value(mi, "AtlasSize", float(meta["atlas"][0]))
+        MEL.set_material_instance_scalar_parameter_value(mi, "PxRange", float(meta["pxRange"]))
+        EAL.save_asset(mi_path, only_if_is_dirty=False)
+    elif old:
+        stale |= {a.get_path_name() for a in (old.get_editor_property("msdf_atlas"), old.get_editor_property("msdf_material")) if a}
 
     glyphs = {}
     for ch, g in meta["glyphs"].items():
@@ -356,17 +386,19 @@ def import_font(fid, msdf_mat, mesh_mat):
         glyph.set_editor_property("advance", g["advance"])
         glyphs[ord(ch)] = glyph
 
-    da_path = f"{folder}/{fid}_DA"
-    da = ensure(da_path, unreal.LetterFontAsset, unreal.DataAssetFactory())
+    da = old or ensure(da_path, unreal.LetterFontAsset, unreal.DataAssetFactory())
+    if old:
+        stale |= {m.get_path_name() for m in old.get_editor_property("glyph_meshes").values()}
     da.set_editor_property("display_name", fid)
     da.set_editor_property("cap_height", meta["capHeight"])
     da.set_editor_property("msdf_atlas", atlas)
     da.set_editor_property("msdf_material", mi)
-    glyph_meshes = import_glyph_meshes(fid, mesh_mat)
+    glyph_meshes = import_glyph_meshes(fid, material("mesh")) if (GEN / "Mesh" / fid).exists() else {}
     da.set_editor_property("glyph_meshes", glyph_meshes)
     da.set_editor_property("glyphs", add_mesh_glyph_metrics(fid, glyphs, meta))
     set_layout(da, meta)
     EAL.save_asset(da_path, only_if_is_dirty=False)
+    delete_unreferenced(stale - {m.get_path_name() for m in glyph_meshes.values()})
     log.append(f"{da_path}: {len(glyphs)} glyphs, {len(glyph_meshes)} meshes, {len(meta.get('kerning', {}))} kerning pairs")
     return da
 
@@ -384,7 +416,7 @@ def run():
         return
     if option("layout-only"):
         for fid in font_ids():
-            da_path = f"{FONT_DIR}/{fid}/{fid}_DA"
+            da_path = f"{font_folder(fid)}/{fid}_DA"
             if EAL.does_asset_exist(da_path):
                 da = EAL.load_asset(da_path)
                 set_layout(da, json.loads((GEN / "MSDF" / f"{fid}.json").read_text(encoding="utf-8")))
@@ -395,7 +427,7 @@ def run():
         mesh_mat = load_or_build(f"{MAT_DIR}/M_LetterMesh", build_mesh_material)
         for fid in font_ids():
             meta = json.loads((GEN / "MSDF" / f"{fid}.json").read_text(encoding="utf-8"))
-            da_path = f"{FONT_DIR}/{fid}/{fid}_DA"
+            da_path = f"{font_folder(fid)}/{fid}_DA"
             da = EAL.load_asset(da_path)
             old = {v.get_path_name() for v in da.get_editor_property("glyph_meshes").values()}
             meshes = import_glyph_meshes(fid, mesh_mat)
@@ -403,16 +435,33 @@ def run():
             da.set_editor_property("glyphs", add_mesh_glyph_metrics(fid, dict(da.get_editor_property("glyphs").items()), meta))
             EAL.save_asset(da_path, only_if_is_dirty=False)
             # Meshes replaced under other names are unreferenced now.
-            for path in old - {m.get_path_name() for m in meshes.values()}:
-                EAL.delete_asset(path.split(".")[0])
+            delete_unreferenced(old - {m.get_path_name() for m in meshes.values()})
             log.append(f"{fid}: {len(meshes)} glyph meshes")
         return
-    msdf = build_msdf_material()
-    mesh_mat = build_mesh_material()
-    fonts = [import_font(fid, msdf, mesh_mat) for fid in font_ids()]
+    # Each material only when a font needs it, and only built when missing (or asked for).
+    builders = {"msdf": (f"{MAT_DIR}/M_LetterMSDF", build_msdf_material),
+                "mesh": (f"{MAT_DIR}/M_LetterMesh", build_mesh_material)}
+    made = {}
+
+    def material(kind):
+        if kind not in made:
+            path, build = builders[kind]
+            made[kind] = build() if option("rebuild-materials") else load_or_build(path, build)
+        return made[kind]
+
+    if FONT_FOLDER and len(font_ids()) != 1:
+        raise RuntimeError("--font-folder is the folder of one font: pass --only=<that font>")
+    fonts = [import_font(fid, material) for fid in font_ids()]
     if fonts:
-        log.append(f"Project Settings > Plugins > HVP Text: Default Font = {fonts[0].get_path_name()}, "
-                   f"Glyph Mesh Material = {mesh_mat.get_path_name()}")
+        settings = f"Project Settings > Plugins > HVP Text: Default Font = {fonts[0].get_path_name()}"
+        if "mesh" in made:
+            settings += f", Glyph Mesh Material = {made['mesh'].get_path_name()}"
+        if "msdf" in made:
+            settings += ", Quad Mesh = /Engine/BasicShapes/Plane"
+        log.append(settings)
+    return {"fonts": [f.get_path_name() for f in fonts],
+            "glyphMeshMaterial": made["mesh"].get_path_name() if "mesh" in made else None,
+            "msdf": "msdf" in made}
 
 
 def main():
@@ -420,8 +469,7 @@ def main():
         emit({"ok": False, "error": f"no {GEN / 'MSDF'}: run build_fonts.py first, or pass --generated"})
         return
     try:
-        run()
-        emit({"ok": True, "log": log})
+        emit({"ok": True, "log": log, **(run() or {})})
     except Exception as e:  # noqa: BLE001 - report, don't swallow
         import traceback
         emit({"ok": False, "error": repr(e), "trace": traceback.format_exc()[-1500:], "log": log})

@@ -34,8 +34,9 @@ def find_ttfs(fonts: pathlib.Path, only=None) -> list:
 
 
 def msdf_atlas_gen(explicit=None) -> pathlib.Path:
-    """msdf-atlas-gen (MIT, Viktor Chlumsky, https://github.com/Chlumsky/msdf-atlas-gen). Not
-    committed: pass --msdf, set MSDF_ATLAS_GEN, put it in bin/ next to these tools, or on the PATH."""
+    """msdf-atlas-gen (MIT, Viktor Chlumsky, https://github.com/Chlumsky/msdf-atlas-gen). v1.4 for
+    Windows is committed in bin/msdf-atlas-gen/ with its licence; --msdf or MSDF_ATLAS_GEN picks
+    another, and the PATH is the last resort."""
     candidates = [explicit, os.environ.get("MSDF_ATLAS_GEN"),
                   TOOLS / "bin" / "msdf-atlas-gen" / "msdf-atlas-gen.exe",
                   TOOLS / "bin" / "msdf-atlas-gen.exe",

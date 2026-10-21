@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.2.0",
+	"VersionName": "1.3.0",
 	"FriendlyName": "HVP Systems",
 	"Description": "Horizon VP's runtime systems: AnimatedGameflow (hierarchical state machine with exit authorities, entry requirements and All/Any queue blocks), CodeAnimation (code-driven animation timelines), HandGrab (world-level pinch-grab primitive) and HVPText (letters as data, drawn in one instanced batch per frame by a world subsystem). The editor module carries the gameflow smoke test, the state-rename commandlet and Make HVPText Font (a Font Face's context menu), whose font tools' Python packages are listed as PythonRequirements.",
 	"Category": "HVP",
